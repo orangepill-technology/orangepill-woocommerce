@@ -61,16 +61,32 @@ class OP_Customer_Sync {
             $customer_data['phone'] = $phone;
         }
 
-        // Create customer via API
-        $result = $api->create_customer($customer_data);
+        // PR-WC-3b: Record outbound event before API send
+        // Store base_url + endpoint separately for environment safety
+        $endpoint = '/v4/admin/customers';
+        $api_settings = $api->get_settings();
+        $base_url = $api_settings['base_url'];
+
+        $event_id = OP_Sync_Journal::record_outbound_pending('customer.create', null, $customer_data, $endpoint, $base_url);
+        $event = OP_Sync_Journal::get_event($event_id);
+
+        // Create customer via API with idempotency key (standard header)
+        $result = $api->request('POST', $endpoint, $customer_data, array(
+            'Idempotency-Key' => $event->idempotency_key,
+        ));
 
         if (is_wp_error($result)) {
+            // PR-WC-3b: Mark event as failed
+            OP_Sync_Journal::mark_failed($event_id, $result->get_error_message());
+
             OP_Logger::error(
                 'customer_creation_failed',
                 'Failed to create customer: ' . $result->get_error_message(),
                 array(
                     'user_id' => $user_id,
                     'email' => $user->user_email,
+                    'event_id' => $event_id,
+                    'idempotency_key' => $event->idempotency_key, // Correlation ID
                 )
             );
             return $result;
@@ -79,8 +95,14 @@ class OP_Customer_Sync {
         $customer_id = $result['id'] ?? null;
 
         if (empty($customer_id)) {
+            // PR-WC-3b: Mark event as failed
+            OP_Sync_Journal::mark_failed($event_id, 'Invalid customer response from API');
+
             return new WP_Error('invalid_response', __('Invalid customer response from API', 'orangepill-wc'));
         }
+
+        // PR-WC-3b: Mark event as sent
+        OP_Sync_Journal::mark_sent($event_id, $result);
 
         // Cache customer_id in user meta
         update_user_meta($user_id, '_orangepill_customer_id', $customer_id);
@@ -92,6 +114,8 @@ class OP_Customer_Sync {
                 'user_id' => $user_id,
                 'customer_id' => $customer_id,
                 'external_id' => 'woo:' . $user_id,
+                'event_id' => $event_id,
+                'idempotency_key' => $event->idempotency_key, // Correlation ID
             )
         );
 

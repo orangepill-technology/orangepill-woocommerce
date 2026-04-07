@@ -104,6 +104,12 @@ function orangepill_wc_init() {
 
     // Enqueue admin assets
     add_action('admin_enqueue_scripts', 'orangepill_wc_enqueue_admin_assets');
+
+    // PR-WC-3b: Replay admin action handler
+    add_action('admin_post_orangepill_replay_event', 'orangepill_wc_replay_event');
+
+    // PR-WC-3b FIX: Dismiss admin action handler
+    add_action('admin_post_orangepill_dismiss_event', 'orangepill_wc_dismiss_event');
 }
 add_action('plugins_loaded', 'orangepill_wc_init', 11);
 
@@ -165,8 +171,89 @@ function orangepill_wc_enqueue_admin_assets($hook) {
 
     wp_localize_script('orangepill-wc-admin', 'orangepillWC', array(
         'ajax_url' => admin_url('admin-ajax.php'),
+        'admin_post_url' => admin_url('admin-post.php'),
         'nonce' => wp_create_nonce('orangepill_wc_admin'),
     ));
+}
+
+/**
+ * PR-WC-3b: Replay failed sync event
+ */
+function orangepill_wc_replay_event() {
+    // Verify nonce
+    if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'orangepill_wc_admin')) {
+        wp_die(__('Security check failed', 'orangepill-wc'));
+    }
+
+    // Verify capability
+    if (!current_user_can('manage_woocommerce')) {
+        wp_die(__('Permission denied', 'orangepill-wc'));
+    }
+
+    // Get event ID
+    $event_id = isset($_POST['event_id']) ? intval($_POST['event_id']) : 0;
+
+    if ($event_id <= 0) {
+        wp_die(__('Invalid event ID', 'orangepill-wc'));
+    }
+
+    // Replay event
+    $result = OP_Sync_Journal::replay($event_id);
+
+    // Handle AJAX requests
+    if (wp_doing_ajax() || (isset($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest')) {
+        wp_send_json($result);
+    }
+
+    // Handle regular form submissions
+    $redirect_url = wp_get_referer() ?? admin_url('admin.php?page=orangepill-failed-syncs');
+
+    if ($result['success']) {
+        $redirect_url = add_query_arg('replay', 'success', $redirect_url);
+    } else {
+        $redirect_url = add_query_arg('replay', 'failed', $redirect_url);
+        $redirect_url = add_query_arg('error', urlencode($result['error'] ?? 'Unknown error'), $redirect_url);
+    }
+
+    wp_redirect($redirect_url);
+    exit;
+}
+
+/**
+ * PR-WC-3b FIX: Dismiss failed sync event
+ */
+function orangepill_wc_dismiss_event() {
+    // Verify nonce
+    if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'orangepill_wc_admin')) {
+        wp_die(__('Security check failed', 'orangepill-wc'));
+    }
+
+    // Verify capability
+    if (!current_user_can('manage_woocommerce')) {
+        wp_die(__('Permission denied', 'orangepill-wc'));
+    }
+
+    // Get event ID
+    $event_id = isset($_POST['event_id']) ? intval($_POST['event_id']) : 0;
+
+    if ($event_id <= 0) {
+        wp_die(__('Invalid event ID', 'orangepill-wc'));
+    }
+
+    // Dismiss event
+    OP_Sync_Journal::dismiss($event_id);
+
+    // Handle AJAX requests
+    if (wp_doing_ajax() || (isset($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest')) {
+        wp_send_json(array('success' => true));
+    }
+
+    // Handle regular form submissions
+    $redirect_url = wp_get_referer() ?? admin_url('admin.php?page=orangepill-failed-syncs');
+    $redirect_url = add_query_arg('dismissed', 'success', $redirect_url);
+
+    wp_redirect($redirect_url);
+    exit;
 }
 
 /**
@@ -178,10 +265,59 @@ function orangepill_wc_activate() {
         update_option('orangepill_wc_sync_log', array());
     }
 
+    // Create sync events table
+    orangepill_wc_create_sync_events_table();
+
     // Flush rewrite rules for webhook endpoint
     flush_rewrite_rules();
 }
 register_activation_hook(__FILE__, 'orangepill_wc_activate');
+
+/**
+ * Create sync events table for durable replay
+ */
+function orangepill_wc_create_sync_events_table() {
+    global $wpdb;
+    $table = $wpdb->prefix . 'orangepill_sync_events';
+    $charset = $wpdb->get_charset_collate();
+
+    $sql = "CREATE TABLE $table (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        direction VARCHAR(32) NOT NULL,
+        event_type VARCHAR(128) NOT NULL,
+        order_id BIGINT UNSIGNED NULL,
+        payload_json LONGTEXT NOT NULL,
+        response_json LONGTEXT NULL,
+        endpoint VARCHAR(255) NOT NULL DEFAULT '',
+        base_url VARCHAR(255) NOT NULL DEFAULT '',
+        status VARCHAR(32) NOT NULL DEFAULT 'pending',
+        idempotency_key VARCHAR(255) NULL,
+        attempt_count INT UNSIGNED NOT NULL DEFAULT 0,
+        last_error TEXT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        last_attempt_at DATETIME NULL,
+        KEY idx_status (status, created_at),
+        KEY idx_order (order_id),
+        KEY idx_direction (direction, status),
+        KEY idx_idempotency (idempotency_key)
+    ) $charset;";
+
+    require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+    dbDelta($sql);
+
+    // PR-WC-3b FIX: Add endpoint column if table already exists
+    $column_exists = $wpdb->get_results("SHOW COLUMNS FROM $table LIKE 'endpoint'");
+    if (empty($column_exists)) {
+        $wpdb->query("ALTER TABLE $table ADD COLUMN endpoint VARCHAR(255) NOT NULL DEFAULT '' AFTER response_json");
+    }
+
+    // PR-WC-3b FIX: Add base_url column if table already exists (environment safety)
+    $column_exists = $wpdb->get_results("SHOW COLUMNS FROM $table LIKE 'base_url'");
+    if (empty($column_exists)) {
+        $wpdb->query("ALTER TABLE $table ADD COLUMN base_url VARCHAR(255) NOT NULL DEFAULT '' AFTER endpoint");
+    }
+}
 
 /**
  * Plugin deactivation hook
