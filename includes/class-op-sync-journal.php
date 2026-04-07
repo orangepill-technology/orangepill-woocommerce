@@ -38,14 +38,17 @@ class OP_Sync_Journal {
         $table = $wpdb->prefix . 'orangepill_sync_events';
 
         // Generate idempotency key if not provided (plugin is source of truth)
-        // Format: {system}:{entity_id}:{event_type}:{timestamp} (CRITICAL: used as correlation ID)
-        // This format is IMMUTABLE - changes break cross-system tracing (Woo logs → Orangepill logs → Database)
+        // Format: woo:{order_id}:{event_type}:{timestamp}
+        // - timestamp = UNIX seconds (time()) - locked format, never milliseconds
+        // - CRITICAL: used as correlation ID across Woo logs → Orangepill logs → Database
+        // - IMMUTABLE: changes break cross-system tracing
+        // - ENFORCED: sprintf ensures format compliance (not just documentation)
         if (!$idempotency_key) {
             $idempotency_key = sprintf(
-                'woo:%s:%s:%d',
+                'woo:%s:%s:%d', // Enforced format (not dev discipline)
                 $order_id ?? 'none',
                 $event_type,
-                time()
+                time() // UNIX seconds (not ms)
             );
         }
 
@@ -194,6 +197,12 @@ class OP_Sync_Journal {
      *
      * Re-sends EXACT stored payload (no mutation).
      * Only failed outbound events can be replayed.
+     *
+     * ENVIRONMENT BEHAVIOR (critical decision):
+     * Replay uses CURRENT environment configuration (base_url from plugin settings).
+     * - Safer for business operations (prevents accidental staging/dead environment sends)
+     * - NOT historically exact (different environment if merchant switched staging→prod)
+     * - Stored endpoint preserves original API version (immutable)
      *
      * @param int $event_id Event ID
      * @return array Result ['success' => bool, 'result' => string, 'error' => string|null]
@@ -414,8 +423,12 @@ class OP_Sync_Journal {
      * Recursively sorts array keys to ensure same payload = same hash
      * regardless of key order (critical for deduplication)
      *
+     * CONSTRAINT: Assumes webhook payload arrays are order-stable.
+     * This handles associative arrays (key sorting) but NOT indexed array reordering.
+     * Example stable: [{"a":1,"b":2}] always sent in same order by provider.
+     *
      * @param array $data Payload to canonicalize
-     * @return array Canonicalized payload (keys sorted recursively)
+     * @return array Canonicalized payload (associative keys sorted recursively)
      */
     private static function canonicalize_for_hash($data) {
         if (!is_array($data)) {
