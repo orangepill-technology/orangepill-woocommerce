@@ -102,6 +102,10 @@ function orangepill_wc_init() {
     // Initialize order sync
     add_action('woocommerce_order_status_changed', 'orangepill_wc_sync_order_status', 10, 3);
 
+    // [PR-WC-LOYALTY-1] Initialize refund sync for loyalty reversal triggers
+    $refund_sync = new OP_Refund_Sync();
+    $refund_sync->init();
+
     // Enqueue admin assets
     add_action('admin_enqueue_scripts', 'orangepill_wc_enqueue_admin_assets');
 

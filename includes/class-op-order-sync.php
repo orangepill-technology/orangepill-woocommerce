@@ -93,6 +93,130 @@ class OP_Order_Sync {
         // Update last sync timestamp
         $order->update_meta_data('_orangepill_last_sync_at', current_time('mysql'));
         $order->save();
+
+        // [PR-WC-LOYALTY-1 / RULE 12] Fire order.finalized on TRANSITION into completed
+        // Guard: old_status !== completed AND new_status === completed
+        // This avoids double emission on idempotent re-saves, manual status writes, or Woo quirks
+        if ($new_status === 'completed' && $old_status !== 'completed') {
+            $this->send_order_finalized($order, $old_status, $new_status);
+        }
+    }
+
+    /**
+     * Send order.finalized event to Orangepill for loyalty processing
+     *
+     * [PR-WC-LOYALTY-1] Fires exactly once per order completion transition.
+     * Plugin emits trigger ONLY — never computes loyalty.
+     *
+     * @param WC_Order $order Order object
+     * @param string $old_status Old status
+     * @param string $new_status New status (must be 'completed')
+     */
+    private function send_order_finalized($order, $old_status, $new_status) {
+        $order_id = $order->get_id();
+
+        // Get gateway settings
+        $gateway = new OP_Payment_Gateway();
+        $integration_id = $gateway->get_option('integration_id');
+        $base_url = $gateway->get_option('api_base_url');
+
+        if (empty($integration_id)) {
+            OP_Logger::error(
+                'order_finalized_skipped',
+                'Integration ID not configured — cannot send loyalty trigger',
+                array('order_id' => $order_id)
+            );
+            return;
+        }
+
+        // Resolve OP customer ID if available
+        $user_id = $order->get_user_id();
+        $op_customer_id = $user_id ? get_user_meta($user_id, '_orangepill_customer_id', true) : null;
+
+        // [PR-WC-LOYALTY-1] Payload for loyalty earn trigger
+        // Uses RAW Woo status (not payment sync mapping)
+        $payload = array(
+            'event' => 'order.finalized',
+            'woo_order_id' => (string) $order_id,
+            'status' => $new_status,
+            'previous_status' => $old_status,
+            'order_total' => $order->get_total(),
+            'currency' => $order->get_currency(),
+            'customer' => array(
+                'woo_customer_id' => $user_id ? (string) $user_id : null,
+                'orangepill_customer_id' => $op_customer_id ?: null,
+                'email' => $order->get_billing_email(),
+                'phone' => $order->get_billing_phone(),
+            ),
+            'metadata' => array(
+                'channel' => 'woocommerce',
+                'integration_id' => $integration_id,
+            ),
+        );
+
+        // [RULE 4] Stable idempotency key — NOT timestamp-based
+        // Format: woo:{order_id}:order.finalized:completed
+        $idempotency_key = sprintf('woo:%s:order.finalized:completed', $order_id);
+
+        // [PR-OP-COMMERCE-EVENT-INGESTION-1] Confirmed endpoint
+        $endpoint = '/v4/commerce/integrations/' . $integration_id . '/events';
+
+        // Record in sync journal (with dedupe)
+        $event_id = OP_Sync_Journal::record_outbound_pending(
+            'order.finalized',
+            $order_id,
+            $payload,
+            $endpoint,
+            $base_url,
+            $idempotency_key
+        );
+
+        $event = OP_Sync_Journal::get_event($event_id);
+        $api = new OP_API_Client();
+
+        // [RULE 7] Failure MUST NOT block Woo admin
+        try {
+            $result = $api->request('POST', $endpoint, $payload, array(
+                'Idempotency-Key' => $event->idempotency_key,
+            ));
+
+            if (is_wp_error($result)) {
+                OP_Sync_Journal::mark_failed($event_id, $result->get_error_message());
+                OP_Logger::error(
+                    'order_finalized_failed',
+                    'Failed to send loyalty earn trigger',
+                    array(
+                        'order_id' => $order_id,
+                        'event_id' => $event_id,
+                        'error' => $result->get_error_message(),
+                        'idempotency_key' => $event->idempotency_key,
+                    )
+                );
+            } else {
+                OP_Sync_Journal::mark_sent($event_id, $result);
+                OP_Logger::info(
+                    'order_finalized_sent',
+                    'Loyalty earn trigger sent',
+                    array(
+                        'order_id' => $order_id,
+                        'event_id' => $event_id,
+                        'idempotency_key' => $event->idempotency_key,
+                    )
+                );
+            }
+        } catch (Exception $e) {
+            OP_Sync_Journal::mark_failed($event_id, $e->getMessage());
+            OP_Logger::error(
+                'order_finalized_exception',
+                'Exception sending loyalty earn trigger',
+                array(
+                    'order_id' => $order_id,
+                    'event_id' => $event_id,
+                    'error' => $e->getMessage(),
+                    'idempotency_key' => $event->idempotency_key,
+                )
+            );
+        }
     }
 
     /**
