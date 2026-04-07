@@ -137,10 +137,12 @@ class OP_Order_Sync {
         // Uses RAW Woo status (not payment sync mapping)
         $payload = array(
             'event' => 'order.finalized',
+            'event_version' => 1,
+            'timestamp' => current_time('mysql'),
             'woo_order_id' => (string) $order_id,
             'status' => $new_status,
             'previous_status' => $old_status,
-            'order_total' => $order->get_total(),
+            'order_total' => (string) $order->get_total(),
             'currency' => $order->get_currency(),
             'customer' => array(
                 'woo_customer_id' => $user_id ? (string) $user_id : null,
@@ -194,14 +196,22 @@ class OP_Order_Sync {
                 );
             } else {
                 OP_Sync_Journal::mark_sent($event_id, $result);
+
+                $log_context = array(
+                    'order_id' => $order_id,
+                    'event_id' => $event_id,
+                    'idempotency_key' => $event->idempotency_key,
+                );
+
+                // Add OP eventId for correlation (if returned)
+                if (is_array($result) && isset($result['eventId'])) {
+                    $log_context['op_event_id'] = $result['eventId'];
+                }
+
                 OP_Logger::info(
                     'order_finalized_sent',
                     'Loyalty earn trigger sent',
-                    array(
-                        'order_id' => $order_id,
-                        'event_id' => $event_id,
-                        'idempotency_key' => $event->idempotency_key,
-                    )
+                    $log_context
                 );
             }
         } catch (Exception $e) {

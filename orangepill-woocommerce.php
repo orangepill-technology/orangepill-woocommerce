@@ -304,7 +304,8 @@ function orangepill_wc_create_sync_events_table() {
         KEY idx_status (status, created_at),
         KEY idx_order (order_id),
         KEY idx_direction (direction, status),
-        KEY idx_idempotency (idempotency_key)
+        KEY idx_idempotency (idempotency_key),
+        UNIQUE KEY idx_dedupe (direction, event_type, idempotency_key)
     ) $charset;";
 
     require_once ABSPATH . 'wp-admin/includes/upgrade.php';
@@ -320,6 +321,15 @@ function orangepill_wc_create_sync_events_table() {
     $column_exists = $wpdb->get_results("SHOW COLUMNS FROM $table LIKE 'base_url'");
     if (empty($column_exists)) {
         $wpdb->query("ALTER TABLE $table ADD COLUMN base_url VARCHAR(255) NOT NULL DEFAULT '' AFTER endpoint");
+    }
+
+    // PR-WC-LOYALTY-1 FIX: Add UNIQUE constraint for dedupe (CRITICAL for concurrent safety)
+    $index_exists = $wpdb->get_results("SHOW INDEX FROM $table WHERE Key_name = 'idx_dedupe'");
+    if (empty($index_exists)) {
+        // Remove old non-unique idempotency index if exists
+        $wpdb->query("ALTER TABLE $table DROP INDEX idx_idempotency");
+        // Add UNIQUE constraint on (direction, event_type, idempotency_key)
+        $wpdb->query("ALTER TABLE $table ADD UNIQUE KEY idx_dedupe (direction, event_type, idempotency_key)");
     }
 }
 

@@ -94,10 +94,12 @@ class OP_Refund_Sync {
         // [PR-WC-LOYALTY-1] Payload for loyalty reversal trigger
         $payload = array(
             'event' => 'order.refunded',
+            'event_version' => 1,
+            'timestamp' => current_time('mysql'),
             'woo_order_id' => (string) $order_id,
             'refund_id' => (string) $refund_id,
             'refund_amount' => (string) $refund_amount,
-            'order_total' => $order->get_total(),
+            'order_total' => (string) $order->get_total(),
             'currency' => $order->get_currency(),
             'customer' => array(
                 'woo_customer_id' => $user_id ? (string) $user_id : null,
@@ -151,15 +153,23 @@ class OP_Refund_Sync {
                 );
             } else {
                 OP_Sync_Journal::mark_sent($event_id, $result);
+
+                $log_context = array(
+                    'order_id' => $order_id,
+                    'refund_id' => $refund_id,
+                    'event_id' => $event_id,
+                    'idempotency_key' => $event->idempotency_key,
+                );
+
+                // Add OP eventId for correlation (if returned)
+                if (is_array($result) && isset($result['eventId'])) {
+                    $log_context['op_event_id'] = $result['eventId'];
+                }
+
                 OP_Logger::info(
                     'order_refunded_sent',
                     'Loyalty reversal trigger sent',
-                    array(
-                        'order_id' => $order_id,
-                        'refund_id' => $refund_id,
-                        'event_id' => $event_id,
-                        'idempotency_key' => $event->idempotency_key,
-                    )
+                    $log_context
                 );
             }
         } catch (Exception $e) {
