@@ -106,22 +106,30 @@ class OP_API_Client {
      * @param string $method HTTP method
      * @param string $endpoint API endpoint
      * @param array $data Request data
+     * @param array $custom_headers Optional custom headers (e.g., X-Idempotency-Key)
      * @return array|WP_Error Response data or error
      */
-    private function request($method, $endpoint, $data = array()) {
+    public function request($method, $endpoint, $data = array(), $custom_headers = array()) {
         if (empty($this->api_key)) {
             return new WP_Error('missing_api_key', __('API key is not configured', 'orangepill-wc'));
         }
 
         $url = $this->base_url . $endpoint;
 
+        $headers = array(
+            'Authorization' => 'Bearer ' . $this->api_key,
+            'Content-Type' => 'application/json',
+            'User-Agent' => 'Orangepill-WooCommerce/' . ORANGEPILL_WC_VERSION,
+        );
+
+        // Merge custom headers (e.g., idempotency keys)
+        if (!empty($custom_headers)) {
+            $headers = array_merge($headers, $custom_headers);
+        }
+
         $args = array(
             'method' => $method,
-            'headers' => array(
-                'Authorization' => 'Bearer ' . $this->api_key,
-                'Content-Type' => 'application/json',
-                'User-Agent' => 'Orangepill-WooCommerce/' . ORANGEPILL_WC_VERSION,
-            ),
+            'headers' => $headers,
             'timeout' => 30,
         );
 

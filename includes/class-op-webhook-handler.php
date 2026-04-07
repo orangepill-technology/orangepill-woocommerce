@@ -184,6 +184,9 @@ class OP_Webhook_Handler {
             return;
         }
 
+        // PR-WC-3b: Record inbound webhook receipt (debug visibility only)
+        OP_Sync_Journal::record_inbound_received('payment.succeeded', $order->get_id(), $data);
+
         // CRITICAL: Idempotency guard - check if event already processed
         if (!empty($event_id)) {
             $idempotency_check = $this->is_event_processed($order, $event_id, $payload_hash);
@@ -278,6 +281,9 @@ class OP_Webhook_Handler {
             );
             return;
         }
+
+        // PR-WC-3b: Record inbound webhook receipt (debug visibility only)
+        OP_Sync_Journal::record_inbound_received('payment.failed', $order->get_id(), $data);
 
         // CRITICAL: Idempotency guard - check if event already processed
         if (!empty($event_id)) {

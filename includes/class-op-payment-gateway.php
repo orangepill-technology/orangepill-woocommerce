@@ -149,20 +149,37 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
                 'cancel_url' => wc_get_checkout_url(),
             );
 
-            $session = $api->create_checkout_session($session_params);
+            // PR-WC-3b: Record outbound event before API send
+            $event_id = OP_Sync_Journal::record_outbound_pending('checkout.session.create', $order_id, $session_params);
+            $event = OP_Sync_Journal::get_event($event_id);
+
+            // Create checkout session with idempotency key
+            $session = $api->request(
+                'POST',
+                '/v4/payments/integrations/' . $this->get_option('integration_id') . '/sessions',
+                $session_params,
+                array('X-Idempotency-Key' => $event->idempotency_key)
+            );
 
             if (is_wp_error($session)) {
+                // PR-WC-3b: Mark event as failed
+                OP_Sync_Journal::mark_failed($event_id, $session->get_error_message());
+
                 OP_Logger::error(
                     'checkout_session_failed',
                     'Failed to create checkout session: ' . $session->get_error_message(),
                     array(
                         'order_id' => $order_id,
+                        'event_id' => $event_id,
                     )
                 );
 
                 wc_add_notice(__('Unable to create payment session. Please try again.', 'orangepill-wc'), 'error');
                 return array('result' => 'failure');
             }
+
+            // PR-WC-3b: Mark event as sent
+            OP_Sync_Journal::mark_sent($event_id, $session);
 
             // Step 3: Store session_id in order meta
             $order->update_meta_data('_orangepill_session_id', $session['id']);
@@ -179,6 +196,7 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
                     'order_id' => $order_id,
                     'session_id' => $session['id'],
                     'customer_id' => $customer_id,
+                    'event_id' => $event_id,
                 )
             );
 

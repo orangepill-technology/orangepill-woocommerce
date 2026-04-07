@@ -31,6 +31,12 @@ class OP_Order_Metabox {
         $payment_failed_at = $order->get_meta('_orangepill_payment_failed_at');
         $failure_reason = $order->get_meta('_orangepill_failure_reason');
 
+        // PR-WC-3b: Get sync health from journal
+        $order_id = $order->get_id();
+        $last_outbound = OP_Sync_Journal::get_last_event_for_order($order_id, 'woo_to_op');
+        $last_inbound = OP_Sync_Journal::get_last_event_for_order($order_id, 'op_to_woo');
+        $last_failed = OP_Sync_Journal::get_last_failed($order_id);
+
         ?>
         <div class="orangepill-metabox">
             <?php if (!empty($session_id)): ?>
@@ -108,6 +114,76 @@ class OP_Order_Metabox {
                 </div>
             <?php endif; ?>
 
+            <?php // PR-WC-3b: Sync Health Section ?>
+            <?php if ($last_outbound || $last_inbound || $last_failed): ?>
+                <hr style="margin: 15px 0; border: none; border-top: 1px solid #ddd;">
+                <h4 style="margin: 10px 0;"><?php esc_html_e('Sync Health', 'orangepill-wc'); ?></h4>
+
+                <?php if ($last_outbound): ?>
+                    <div class="orangepill-metabox-field">
+                        <label><?php esc_html_e('Last Outbound Sync:', 'orangepill-wc'); ?></label>
+                        <div class="orangepill-metabox-value">
+                            <span class="orangepill-sync-status orangepill-sync-status-<?php echo esc_attr($last_outbound->status); ?>">
+                                <?php echo esc_html(ucfirst($last_outbound->status)); ?>
+                            </span>
+                            <br>
+                            <small class="description">
+                                <?php echo esc_html($last_outbound->event_type); ?>
+                                &middot;
+                                <?php echo esc_html(human_time_diff(strtotime($last_outbound->created_at), current_time('timestamp'))); ?>
+                                <?php esc_html_e('ago', 'orangepill-wc'); ?>
+                            </small>
+                        </div>
+                    </div>
+                <?php endif; ?>
+
+                <?php if ($last_inbound): ?>
+                    <div class="orangepill-metabox-field">
+                        <label><?php esc_html_e('Last Inbound Webhook:', 'orangepill-wc'); ?></label>
+                        <div class="orangepill-metabox-value">
+                            <span class="orangepill-sync-status orangepill-sync-status-<?php echo esc_attr($last_inbound->status); ?>">
+                                <?php echo esc_html(ucfirst($last_inbound->status)); ?>
+                            </span>
+                            <br>
+                            <small class="description">
+                                <?php echo esc_html($last_inbound->event_type); ?>
+                                &middot;
+                                <?php echo esc_html(human_time_diff(strtotime($last_inbound->created_at), current_time('timestamp'))); ?>
+                                <?php esc_html_e('ago', 'orangepill-wc'); ?>
+                            </small>
+                        </div>
+                    </div>
+                <?php endif; ?>
+
+                <?php if ($last_failed): ?>
+                    <div class="orangepill-metabox-field">
+                        <div class="notice notice-error inline" style="margin: 10px 0; padding: 8px 12px;">
+                            <p style="margin: 0;">
+                                <strong><?php esc_html_e('Failed Sync Detected', 'orangepill-wc'); ?></strong><br>
+                                <?php echo esc_html($last_failed->last_error); ?>
+                            </p>
+                            <p style="margin: 8px 0 0 0;">
+                                <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="display: inline;">
+                                    <input type="hidden" name="action" value="orangepill_replay_event" />
+                                    <input type="hidden" name="event_id" value="<?php echo esc_attr($last_failed->id); ?>" />
+                                    <input type="hidden" name="nonce" value="<?php echo esc_attr(wp_create_nonce('orangepill_wc_admin')); ?>" />
+                                    <button
+                                        type="submit"
+                                        class="button button-primary button-small"
+                                        onclick="return confirm('<?php esc_attr_e('Replay this event? The exact stored payload will be re-sent to Orangepill.', 'orangepill-wc'); ?>');"
+                                    >
+                                        <?php esc_html_e('Replay Failed Sync', 'orangepill-wc'); ?>
+                                    </button>
+                                </form>
+                                <a href="<?php echo esc_url(admin_url('admin.php?page=orangepill-failed-syncs')); ?>" class="button button-small">
+                                    <?php esc_html_e('View All Failed Syncs', 'orangepill-wc'); ?>
+                                </a>
+                            </p>
+                        </div>
+                    </div>
+                <?php endif; ?>
+            <?php endif; ?>
+
             <?php if (empty($session_id) && empty($payment_id)): ?>
                 <p class="description">
                     <?php esc_html_e('No Orangepill payment data available for this order.', 'orangepill-wc'); ?>
@@ -150,6 +226,31 @@ class OP_Order_Metabox {
             .orangepill-payment-status-pending {
                 background: #fff3cd;
                 color: #856404;
+            }
+            /* PR-WC-3b: Sync status indicators */
+            .orangepill-sync-status {
+                display: inline-block;
+                padding: 4px 10px;
+                border-radius: 3px;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            .orangepill-sync-status-sent {
+                background: #d4edda;
+                color: #155724;
+            }
+            .orangepill-sync-status-failed {
+                background: #f8d7da;
+                color: #721c24;
+            }
+            .orangepill-sync-status-pending {
+                background: #fff3cd;
+                color: #856404;
+            }
+            .orangepill-sync-status-received,
+            .orangepill-sync-status-processed {
+                background: #d1ecf1;
+                color: #0c5460;
             }
         </style>
         <?php

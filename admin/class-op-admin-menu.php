@@ -52,6 +52,16 @@ class OP_Admin_Menu {
             array($this, 'render_sync_log_page')
         );
 
+        // PR-WC-3b: Add failed syncs page
+        add_submenu_page(
+            'woocommerce',
+            __('Orangepill Failed Syncs', 'orangepill-wc'),
+            __('Orangepill Failed Syncs', 'orangepill-wc'),
+            'manage_woocommerce',
+            'orangepill-failed-syncs',
+            array($this, 'render_failed_syncs_page')
+        );
+
         // Add order metabox
         add_action('add_meta_boxes', array($this, 'register_order_metabox'));
     }
@@ -89,6 +99,18 @@ class OP_Admin_Menu {
         }
 
         $page = new OP_Sync_Log_Page();
+        $page->render();
+    }
+
+    /**
+     * PR-WC-3b: Render failed syncs page
+     */
+    public function render_failed_syncs_page() {
+        if (!current_user_can('manage_woocommerce')) {
+            wp_die(__('You do not have permission to access this page.', 'orangepill-wc'));
+        }
+
+        $page = new OP_Failed_Syncs_Page();
         $page->render();
     }
 
