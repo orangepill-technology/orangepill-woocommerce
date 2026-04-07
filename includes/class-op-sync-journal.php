@@ -24,10 +24,11 @@ class OP_Sync_Journal {
      * @param string $event_type Event type (e.g., 'customer.create', 'checkout.session.create')
      * @param int|null $order_id WooCommerce order ID
      * @param array $payload Request payload
+     * @param string $endpoint API endpoint (e.g., '/v4/admin/customers')
      * @param string|null $idempotency_key Optional pre-generated idempotency key
      * @return int Event ID
      */
-    public static function record_outbound_pending($event_type, $order_id, $payload, $idempotency_key = null) {
+    public static function record_outbound_pending($event_type, $order_id, $payload, $endpoint, $idempotency_key = null) {
         global $wpdb;
         $table = $wpdb->prefix . 'orangepill_sync_events';
 
@@ -49,6 +50,7 @@ class OP_Sync_Journal {
             'event_type' => $event_type,
             'order_id' => $order_id,
             'payload_json' => wp_json_encode($safe_payload),
+            'endpoint' => $endpoint,
             'status' => 'pending',
             'idempotency_key' => $idempotency_key,
             'attempt_count' => 0,
@@ -155,12 +157,24 @@ class OP_Sync_Journal {
      * Get all failed outbound events
      *
      * @param int $limit Max results
+     * @param int $days Number of days to look back (0 = all time)
      * @return array Event rows
      */
-    public static function get_failed_events($limit = 50) {
+    public static function get_failed_events($limit = 50, $days = 7) {
         global $wpdb;
         $table = $wpdb->prefix . 'orangepill_sync_events';
 
+        // PR-WC-3b FIX: Default to last 7 days to reduce noise
+        if ($days > 0) {
+            $date_threshold = date('Y-m-d H:i:s', strtotime('-' . $days . ' days'));
+            return $wpdb->get_results($wpdb->prepare(
+                "SELECT * FROM $table WHERE direction = 'woo_to_op' AND status = 'failed' AND created_at > %s ORDER BY created_at DESC LIMIT %d",
+                $date_threshold,
+                $limit
+            ));
+        }
+
+        // All time
         return $wpdb->get_results($wpdb->prepare(
             "SELECT * FROM $table WHERE direction = 'woo_to_op' AND status = 'failed' ORDER BY created_at DESC LIMIT %d",
             $limit
@@ -201,10 +215,14 @@ class OP_Sync_Journal {
         $api = new OP_API_Client();
 
         try {
-            // Determine endpoint based on event type
-            $endpoint = self::get_endpoint_for_event($event->event_type);
+            // PR-WC-3b FIX: Use stored endpoint directly (no derivation)
+            $endpoint = $event->endpoint;
 
-            // Re-send EXACT stored payload with idempotency key
+            if (empty($endpoint)) {
+                return array('success' => false, 'result' => 'invalid_event', 'error' => 'Event missing endpoint');
+            }
+
+            // Re-send EXACT stored payload with ORIGINAL idempotency key
             $response = $api->request('POST', $endpoint, $payload, array(
                 'X-Idempotency-Key' => $event->idempotency_key,
             ));
@@ -252,6 +270,20 @@ class OP_Sync_Journal {
         global $wpdb;
         $table = $wpdb->prefix . 'orangepill_sync_events';
 
+        // PR-WC-3b FIX: Extract idempotency key from webhook payload
+        $idempotency_key = $payload['event_id'] ?? $payload['idempotency_key'] ?? null;
+
+        // PR-WC-3b FIX: Guard against duplicate webhooks
+        if ($idempotency_key) {
+            $existing = $wpdb->get_var($wpdb->prepare(
+                "SELECT id FROM $table WHERE idempotency_key = %s AND direction = 'op_to_woo' LIMIT 1",
+                $idempotency_key
+            ));
+            if ($existing) {
+                return (int) $existing; // Already recorded - skip duplicate
+            }
+        }
+
         // Sanitize - never store webhook secrets
         $safe = self::sanitize_payload($payload);
 
@@ -260,6 +292,7 @@ class OP_Sync_Journal {
             'event_type' => $event_type,
             'order_id' => $order_id,
             'payload_json' => wp_json_encode($safe),
+            'idempotency_key' => $idempotency_key,
             'status' => 'received',
         ));
 
@@ -354,27 +387,4 @@ class OP_Sync_Journal {
         return $safe;
     }
 
-    /**
-     * Get API endpoint for event type
-     *
-     * @param string $event_type Event type
-     * @return string Endpoint path
-     */
-    private static function get_endpoint_for_event($event_type) {
-        $gateway = new OP_Payment_Gateway();
-        $integration_id = $gateway->get_option('integration_id');
-
-        switch ($event_type) {
-            case 'customer.create':
-                return '/v4/admin/customers';
-            case 'checkout.session.create':
-                return '/v4/payments/integrations/' . $integration_id . '/sessions';
-            case 'order.updated':
-                // Note: Currently order.updated is informational logging only
-                // No dedicated API endpoint exists
-                return '/v4/commerce/integrations/' . $integration_id . '/orders';
-            default:
-                return '/v4/unknown';
-        }
-    }
 }

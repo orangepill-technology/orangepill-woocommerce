@@ -162,6 +162,15 @@ class OP_Order_Metabox {
                                 <strong><?php esc_html_e('Failed Sync Detected', 'orangepill-wc'); ?></strong><br>
                                 <?php echo esc_html($last_failed->last_error); ?>
                             </p>
+                            <p style="margin: 8px 0 0 0; font-size: 12px; color: #666;">
+                                <strong><?php esc_html_e('Attempts:', 'orangepill-wc'); ?></strong> <?php echo esc_html($last_failed->attempt_count); ?>
+                                <?php if ($last_failed->last_attempt_at): ?>
+                                    &nbsp;|&nbsp;
+                                    <strong><?php esc_html_e('Last attempt:', 'orangepill-wc'); ?></strong>
+                                    <?php echo esc_html(human_time_diff(strtotime($last_failed->last_attempt_at), current_time('timestamp'))); ?>
+                                    <?php esc_html_e('ago', 'orangepill-wc'); ?>
+                                <?php endif; ?>
+                            </p>
                             <p style="margin: 8px 0 0 0;">
                                 <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="display: inline;">
                                     <input type="hidden" name="action" value="orangepill_replay_event" />

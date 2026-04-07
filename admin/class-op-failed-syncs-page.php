@@ -23,8 +23,10 @@ class OP_Failed_Syncs_Page {
         // Handle replay notices
         $this->render_notices();
 
-        // Get failed events
-        $all_events = OP_Sync_Journal::get_failed_events(200);
+        // PR-WC-3b FIX: Get failed events with time filter (7 days by default, or all if requested)
+        $show_all = isset($_GET['show_all']) && $_GET['show_all'] === '1';
+        $days = $show_all ? 0 : 7;
+        $all_events = OP_Sync_Journal::get_failed_events(200, $days);
 
         // Pagination
         $page = isset($_GET['paged']) ? max(1, intval($_GET['paged'])) : 1;
@@ -38,7 +40,15 @@ class OP_Failed_Syncs_Page {
             <h1><?php esc_html_e('Orangepill Failed Syncs', 'orangepill-wc'); ?></h1>
 
             <p class="description">
-                <?php esc_html_e('Failed outbound sync events (Woo → Orangepill). Plugin is source of truth.', 'orangepill-wc'); ?>
+                <?php
+                if ($show_all) {
+                    esc_html_e('Showing all failed outbound sync events (Woo → Orangepill). Plugin is source of truth.', 'orangepill-wc');
+                    echo ' <a href="' . esc_url(admin_url('admin.php?page=orangepill-failed-syncs')) . '">' . esc_html__('Show last 7 days only', 'orangepill-wc') . '</a>';
+                } else {
+                    esc_html_e('Showing failed outbound sync events from last 7 days (Woo → Orangepill). Plugin is source of truth.', 'orangepill-wc');
+                    echo ' <a href="' . esc_url(admin_url('admin.php?page=orangepill-failed-syncs&show_all=1')) . '">' . esc_html__('Show all time', 'orangepill-wc') . '</a>';
+                }
+                ?>
             </p>
 
             <!-- Events Table -->
@@ -119,13 +129,18 @@ class OP_Failed_Syncs_Page {
                                             <?php esc_html_e('Replay', 'orangepill-wc'); ?>
                                         </button>
                                     </form>
-                                    <button
-                                        type="button"
-                                        class="button button-small orangepill-dismiss-event"
-                                        data-event-id="<?php echo esc_attr($event->id); ?>"
-                                    >
-                                        <?php esc_html_e('Dismiss', 'orangepill-wc'); ?>
-                                    </button>
+                                    <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="display: inline;">
+                                        <input type="hidden" name="action" value="orangepill_dismiss_event" />
+                                        <input type="hidden" name="event_id" value="<?php echo esc_attr($event->id); ?>" />
+                                        <input type="hidden" name="nonce" value="<?php echo esc_attr(wp_create_nonce('orangepill_wc_admin')); ?>" />
+                                        <button
+                                            type="submit"
+                                            class="button button-small orangepill-dismiss-event"
+                                            onclick="return confirm('<?php esc_attr_e('Dismiss this event? It will be hidden from the failed syncs list.', 'orangepill-wc'); ?>');"
+                                        >
+                                            <?php esc_html_e('Dismiss', 'orangepill-wc'); ?>
+                                        </button>
+                                    </form>
                                 </td>
                             </tr>
                             <tr id="orangepill-payload-<?php echo esc_attr($event->id); ?>" class="orangepill-details-row" style="display: none;">
@@ -174,26 +189,34 @@ class OP_Failed_Syncs_Page {
      * Render admin notices for replay results
      */
     private function render_notices() {
-        if (!isset($_GET['replay'])) {
-            return;
+        // Replay notices
+        if (isset($_GET['replay'])) {
+            $replay_result = sanitize_text_field($_GET['replay']);
+
+            if ($replay_result === 'success') {
+                ?>
+                <div class="notice notice-success is-dismissible">
+                    <p><?php esc_html_e('Event replayed successfully!', 'orangepill-wc'); ?></p>
+                </div>
+                <?php
+            } elseif ($replay_result === 'failed') {
+                $error = isset($_GET['error']) ? sanitize_text_field($_GET['error']) : __('Unknown error', 'orangepill-wc');
+                ?>
+                <div class="notice notice-error is-dismissible">
+                    <p>
+                        <?php esc_html_e('Replay failed:', 'orangepill-wc'); ?>
+                        <strong><?php echo esc_html($error); ?></strong>
+                    </p>
+                </div>
+                <?php
+            }
         }
 
-        $replay_result = sanitize_text_field($_GET['replay']);
-
-        if ($replay_result === 'success') {
+        // Dismiss notices
+        if (isset($_GET['dismissed']) && $_GET['dismissed'] === 'success') {
             ?>
             <div class="notice notice-success is-dismissible">
-                <p><?php esc_html_e('Event replayed successfully!', 'orangepill-wc'); ?></p>
-            </div>
-            <?php
-        } elseif ($replay_result === 'failed') {
-            $error = isset($_GET['error']) ? sanitize_text_field($_GET['error']) : __('Unknown error', 'orangepill-wc');
-            ?>
-            <div class="notice notice-error is-dismissible">
-                <p>
-                    <?php esc_html_e('Replay failed:', 'orangepill-wc'); ?>
-                    <strong><?php echo esc_html($error); ?></strong>
-                </p>
+                <p><?php esc_html_e('Event dismissed successfully.', 'orangepill-wc'); ?></p>
             </div>
             <?php
         }

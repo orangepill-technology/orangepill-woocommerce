@@ -107,6 +107,9 @@ function orangepill_wc_init() {
 
     // PR-WC-3b: Replay admin action handler
     add_action('admin_post_orangepill_replay_event', 'orangepill_wc_replay_event');
+
+    // PR-WC-3b FIX: Dismiss admin action handler
+    add_action('admin_post_orangepill_dismiss_event', 'orangepill_wc_dismiss_event');
 }
 add_action('plugins_loaded', 'orangepill_wc_init', 11);
 
@@ -217,6 +220,43 @@ function orangepill_wc_replay_event() {
 }
 
 /**
+ * PR-WC-3b FIX: Dismiss failed sync event
+ */
+function orangepill_wc_dismiss_event() {
+    // Verify nonce
+    if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'orangepill_wc_admin')) {
+        wp_die(__('Security check failed', 'orangepill-wc'));
+    }
+
+    // Verify capability
+    if (!current_user_can('manage_woocommerce')) {
+        wp_die(__('Permission denied', 'orangepill-wc'));
+    }
+
+    // Get event ID
+    $event_id = isset($_POST['event_id']) ? intval($_POST['event_id']) : 0;
+
+    if ($event_id <= 0) {
+        wp_die(__('Invalid event ID', 'orangepill-wc'));
+    }
+
+    // Dismiss event
+    OP_Sync_Journal::dismiss($event_id);
+
+    // Handle AJAX requests
+    if (wp_doing_ajax() || (isset($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest')) {
+        wp_send_json(array('success' => true));
+    }
+
+    // Handle regular form submissions
+    $redirect_url = wp_get_referer() ?? admin_url('admin.php?page=orangepill-failed-syncs');
+    $redirect_url = add_query_arg('dismissed', 'success', $redirect_url);
+
+    wp_redirect($redirect_url);
+    exit;
+}
+
+/**
  * Plugin activation hook
  */
 function orangepill_wc_activate() {
@@ -248,6 +288,7 @@ function orangepill_wc_create_sync_events_table() {
         order_id BIGINT UNSIGNED NULL,
         payload_json LONGTEXT NOT NULL,
         response_json LONGTEXT NULL,
+        endpoint VARCHAR(255) NOT NULL DEFAULT '',
         status VARCHAR(32) NOT NULL DEFAULT 'pending',
         idempotency_key VARCHAR(255) NULL,
         attempt_count INT UNSIGNED NOT NULL DEFAULT 0,
@@ -263,6 +304,12 @@ function orangepill_wc_create_sync_events_table() {
 
     require_once ABSPATH . 'wp-admin/includes/upgrade.php';
     dbDelta($sql);
+
+    // PR-WC-3b FIX: Add endpoint column if table already exists
+    $column_exists = $wpdb->get_results("SHOW COLUMNS FROM $table LIKE 'endpoint'");
+    if (empty($column_exists)) {
+        $wpdb->query("ALTER TABLE $table ADD COLUMN endpoint VARCHAR(255) NOT NULL DEFAULT '' AFTER response_json");
+    }
 }
 
 /**

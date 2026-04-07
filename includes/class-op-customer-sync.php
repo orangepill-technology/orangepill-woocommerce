@@ -61,12 +61,13 @@ class OP_Customer_Sync {
             $customer_data['phone'] = $phone;
         }
 
-        // PR-WC-3b: Record outbound event before API send
-        $event_id = OP_Sync_Journal::record_outbound_pending('customer.create', null, $customer_data);
+        // PR-WC-3b: Record outbound event before API send (with explicit endpoint)
+        $endpoint = '/v4/admin/customers';
+        $event_id = OP_Sync_Journal::record_outbound_pending('customer.create', null, $customer_data, $endpoint);
         $event = OP_Sync_Journal::get_event($event_id);
 
         // Create customer via API with idempotency key
-        $result = $api->request('POST', '/v4/admin/customers', $customer_data, array(
+        $result = $api->request('POST', $endpoint, $customer_data, array(
             'X-Idempotency-Key' => $event->idempotency_key,
         ));
 
