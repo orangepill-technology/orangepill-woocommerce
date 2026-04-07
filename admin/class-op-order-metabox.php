@@ -179,7 +179,7 @@ class OP_Order_Metabox {
                                     <button
                                         type="submit"
                                         class="button button-primary button-small"
-                                        onclick="return confirm('<?php esc_attr_e('Replay this event? The exact stored payload will be re-sent to Orangepill.', 'orangepill-wc'); ?>');"
+                                        onclick="return confirm('<?php echo esc_js(__('Replay this event?\n\nThis will re-send the original request to Orangepill using the same data.', 'orangepill-wc')); ?>');"
                                     >
                                         <?php esc_html_e('Replay Failed Sync', 'orangepill-wc'); ?>
                                     </button>

@@ -222,9 +222,10 @@ class OP_Sync_Journal {
                 return array('success' => false, 'result' => 'invalid_event', 'error' => 'Event missing endpoint');
             }
 
-            // Re-send EXACT stored payload with ORIGINAL idempotency key
+            // Re-send EXACT stored payload with ORIGINAL idempotency key (standard header name)
             $response = $api->request('POST', $endpoint, $payload, array(
-                'X-Idempotency-Key' => $event->idempotency_key,
+                'Idempotency-Key' => $event->idempotency_key,
+                'X-Idempotency-Key' => $event->idempotency_key, // backward compatibility
             ));
 
             self::mark_sent($event_id, $response);
@@ -235,6 +236,7 @@ class OP_Sync_Journal {
                 array(
                     'event_id' => $event_id,
                     'order_id' => $event->order_id,
+                    'idempotency_key' => $event->idempotency_key, // Correlation ID
                 )
             );
 
@@ -248,6 +250,7 @@ class OP_Sync_Journal {
                 array(
                     'event_id' => $event_id,
                     'order_id' => $event->order_id,
+                    'idempotency_key' => $event->idempotency_key, // Correlation ID
                 )
             );
 
@@ -273,15 +276,18 @@ class OP_Sync_Journal {
         // PR-WC-3b FIX: Extract idempotency key from webhook payload
         $idempotency_key = $payload['event_id'] ?? $payload['idempotency_key'] ?? null;
 
+        // PR-WC-3b FIX: Fallback to payload hash if no idempotency key (provider inconsistencies)
+        if (!$idempotency_key) {
+            $idempotency_key = 'hash:' . hash('sha256', wp_json_encode($payload));
+        }
+
         // PR-WC-3b FIX: Guard against duplicate webhooks
-        if ($idempotency_key) {
-            $existing = $wpdb->get_var($wpdb->prepare(
-                "SELECT id FROM $table WHERE idempotency_key = %s AND direction = 'op_to_woo' LIMIT 1",
-                $idempotency_key
-            ));
-            if ($existing) {
-                return (int) $existing; // Already recorded - skip duplicate
-            }
+        $existing = $wpdb->get_var($wpdb->prepare(
+            "SELECT id FROM $table WHERE idempotency_key = %s AND direction = 'op_to_woo' LIMIT 1",
+            $idempotency_key
+        ));
+        if ($existing) {
+            return (int) $existing; // Already recorded - skip duplicate
         }
 
         // Sanitize - never store webhook secrets

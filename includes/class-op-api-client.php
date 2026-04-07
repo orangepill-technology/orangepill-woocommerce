@@ -106,7 +106,7 @@ class OP_API_Client {
      * @param string $method HTTP method
      * @param string $endpoint API endpoint
      * @param array $data Request data
-     * @param array $custom_headers Optional custom headers (e.g., X-Idempotency-Key)
+     * @param array $custom_headers Optional custom headers (e.g., Idempotency-Key)
      * @return array|WP_Error Response data or error
      */
     public function request($method, $endpoint, $data = array(), $custom_headers = array()) {
@@ -114,7 +114,12 @@ class OP_API_Client {
             return new WP_Error('missing_api_key', __('API key is not configured', 'orangepill-wc'));
         }
 
-        $url = $this->base_url . $endpoint;
+        // Support full URLs for replay (version drift protection)
+        if (preg_match('/^https?:\/\//', $endpoint)) {
+            $url = $endpoint; // Already a full URL
+        } else {
+            $url = $this->base_url . $endpoint; // Relative path
+        }
 
         $headers = array(
             'Authorization' => 'Bearer ' . $this->api_key,

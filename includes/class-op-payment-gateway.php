@@ -151,15 +151,23 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
 
             // PR-WC-3b: Record outbound event before API send (with explicit endpoint)
             $endpoint = '/v4/payments/integrations/' . $this->get_option('integration_id') . '/sessions';
-            $event_id = OP_Sync_Journal::record_outbound_pending('checkout.session.create', $order_id, $session_params, $endpoint);
+
+            // Store full URL for replay safety (version drift protection)
+            $api_settings = $api->get_settings();
+            $full_endpoint = $api_settings['base_url'] . $endpoint;
+
+            $event_id = OP_Sync_Journal::record_outbound_pending('checkout.session.create', $order_id, $session_params, $full_endpoint);
             $event = OP_Sync_Journal::get_event($event_id);
 
-            // Create checkout session with idempotency key
+            // Create checkout session with idempotency key (standard header name)
             $session = $api->request(
                 'POST',
                 $endpoint,
                 $session_params,
-                array('X-Idempotency-Key' => $event->idempotency_key)
+                array(
+                    'Idempotency-Key' => $event->idempotency_key,
+                    'X-Idempotency-Key' => $event->idempotency_key, // backward compatibility
+                )
             );
 
             if (is_wp_error($session)) {
@@ -172,6 +180,7 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
                     array(
                         'order_id' => $order_id,
                         'event_id' => $event_id,
+                        'idempotency_key' => $event->idempotency_key, // Correlation ID
                     )
                 );
 
@@ -198,6 +207,7 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
                     'session_id' => $session['id'],
                     'customer_id' => $customer_id,
                     'event_id' => $event_id,
+                    'idempotency_key' => $event->idempotency_key, // Correlation ID
                 )
             );
 

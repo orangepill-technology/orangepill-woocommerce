@@ -63,12 +63,18 @@ class OP_Customer_Sync {
 
         // PR-WC-3b: Record outbound event before API send (with explicit endpoint)
         $endpoint = '/v4/admin/customers';
-        $event_id = OP_Sync_Journal::record_outbound_pending('customer.create', null, $customer_data, $endpoint);
+
+        // Store full URL for replay safety (version drift protection)
+        $api_settings = $api->get_settings();
+        $full_endpoint = $api_settings['base_url'] . $endpoint;
+
+        $event_id = OP_Sync_Journal::record_outbound_pending('customer.create', null, $customer_data, $full_endpoint);
         $event = OP_Sync_Journal::get_event($event_id);
 
-        // Create customer via API with idempotency key
+        // Create customer via API with idempotency key (standard header name)
         $result = $api->request('POST', $endpoint, $customer_data, array(
-            'X-Idempotency-Key' => $event->idempotency_key,
+            'Idempotency-Key' => $event->idempotency_key,
+            'X-Idempotency-Key' => $event->idempotency_key, // backward compatibility
         ));
 
         if (is_wp_error($result)) {
@@ -82,6 +88,7 @@ class OP_Customer_Sync {
                     'user_id' => $user_id,
                     'email' => $user->user_email,
                     'event_id' => $event_id,
+                    'idempotency_key' => $event->idempotency_key, // Correlation ID
                 )
             );
             return $result;
@@ -110,6 +117,7 @@ class OP_Customer_Sync {
                 'customer_id' => $customer_id,
                 'external_id' => 'woo:' . $user_id,
                 'event_id' => $event_id,
+                'idempotency_key' => $event->idempotency_key, // Correlation ID
             )
         );
 
