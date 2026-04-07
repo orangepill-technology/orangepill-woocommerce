@@ -52,6 +52,31 @@ class OP_Sync_Journal {
             );
         }
 
+        // [PR-WC-LOYALTY-1 / RULE 11] Dedupe by (direction, event_type, idempotency_key)
+        // Prevents duplicate journal rows from:
+        // - repeated Woo status saves
+        // - hook re-fires
+        // - admin actions
+        if ($idempotency_key) {
+            $existing = $wpdb->get_row($wpdb->prepare(
+                "SELECT id, status FROM $table WHERE direction = 'woo_to_op' AND event_type = %s AND idempotency_key = %s LIMIT 1",
+                $event_type,
+                $idempotency_key
+            ));
+            if ($existing) {
+                OP_Logger::info(
+                    'sync_event_deduped',
+                    'Event already recorded, returning existing ID',
+                    array(
+                        'event_type' => $event_type,
+                        'event_id' => $existing->id,
+                        'idempotency_key' => $idempotency_key,
+                    )
+                );
+                return (int) $existing->id; // dedupe — return existing, no new row
+            }
+        }
+
         // Sanitize payload - NEVER store API keys, secrets, or auth headers
         $safe_payload = self::sanitize_payload($payload);
 
@@ -188,6 +213,53 @@ class OP_Sync_Journal {
         // All time
         return $wpdb->get_results($wpdb->prepare(
             "SELECT * FROM $table WHERE direction = 'woo_to_op' AND status = 'failed' ORDER BY created_at DESC LIMIT %d",
+            $limit
+        ));
+    }
+
+    /**
+     * Get last event for order filtered by event_type
+     *
+     * [PR-WC-LOYALTY-1] For single-event queries (e.g., order.finalized - one per order)
+     *
+     * @param int $order_id Order ID
+     * @param string $direction Direction ('woo_to_op' or 'op_to_woo')
+     * @param string $event_type Event type filter (e.g., 'order.finalized')
+     * @return object|null Event row
+     */
+    public static function get_last_event_for_order_by_type($order_id, $direction, $event_type) {
+        global $wpdb;
+        $table = $wpdb->prefix . 'orangepill_sync_events';
+
+        return $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM $table WHERE order_id = %d AND direction = %s AND event_type = %s ORDER BY created_at DESC LIMIT 1",
+            $order_id,
+            $direction,
+            $event_type
+        ));
+    }
+
+    /**
+     * Get all events for order filtered by event_type
+     *
+     * [PR-WC-LOYALTY-1 / RULE 13] Multi-event query (e.g., order.refunded - multiple per order)
+     * Returns ALL refund events, not just last one
+     *
+     * @param int $order_id Order ID
+     * @param string $direction Direction ('woo_to_op' or 'op_to_woo')
+     * @param string $event_type Event type filter (e.g., 'order.refunded')
+     * @param int $limit Maximum number of events to return (default 20)
+     * @return array Event rows
+     */
+    public static function get_events_for_order($order_id, $direction, $event_type, $limit = 20) {
+        global $wpdb;
+        $table = $wpdb->prefix . 'orangepill_sync_events';
+
+        return $wpdb->get_results($wpdb->prepare(
+            "SELECT * FROM $table WHERE order_id = %d AND direction = %s AND event_type = %s ORDER BY created_at DESC LIMIT %d",
+            $order_id,
+            $direction,
+            $event_type,
             $limit
         ));
     }

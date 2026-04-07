@@ -193,6 +193,158 @@ class OP_Order_Metabox {
                 <?php endif; ?>
             <?php endif; ?>
 
+            <?php // PR-WC-LOYALTY-1: Loyalty Activity Section ?>
+            <?php
+            $last_earn = OP_Sync_Journal::get_last_event_for_order_by_type($order_id, 'woo_to_op', 'order.finalized');
+            $refund_events = OP_Sync_Journal::get_events_for_order($order_id, 'woo_to_op', 'order.refunded');
+            ?>
+
+            <?php if ($last_earn || !empty($refund_events)): ?>
+                <hr style="margin: 15px 0; border: none; border-top: 1px solid #ddd;">
+                <h4 style="margin: 10px 0;"><?php esc_html_e('Loyalty Activity', 'orangepill-wc'); ?></h4>
+
+                <?php // Loyalty Earn (single event) ?>
+                <?php if ($last_earn): ?>
+                    <div class="orangepill-metabox-field">
+                        <label><?php esc_html_e('Loyalty Earn:', 'orangepill-wc'); ?></label>
+                        <div class="orangepill-metabox-value">
+                            <?php
+                            $earn_icon = $last_earn->status === 'sent' ? '✅' : ($last_earn->status === 'failed' ? '❌' : '⏳');
+                            ?>
+                            <span class="orangepill-sync-status orangepill-sync-status-<?php echo esc_attr($last_earn->status); ?>">
+                                <?php echo esc_html($earn_icon . ' ' . ucfirst($last_earn->status)); ?>
+                            </span>
+                            <br>
+                            <small class="description">
+                                <?php esc_html_e('Event:', 'orangepill-wc'); ?> <?php echo esc_html($last_earn->event_type); ?>
+                                &middot;
+                                <?php echo esc_html(human_time_diff(strtotime($last_earn->created_at), current_time('timestamp'))); ?>
+                                <?php esc_html_e('ago', 'orangepill-wc'); ?>
+                                <?php if ($last_earn->idempotency_key): ?>
+                                    <br>
+                                    <?php esc_html_e('Idempotency Key:', 'orangepill-wc'); ?> <code><?php echo esc_html($last_earn->idempotency_key); ?></code>
+                                <?php endif; ?>
+                            </small>
+
+                            <?php if ($last_earn->status === 'failed'): ?>
+                                <div style="margin-top: 8px; padding: 8px; background: #f8d7da; border-radius: 3px;">
+                                    <strong><?php esc_html_e('Error:', 'orangepill-wc'); ?></strong>
+                                    <?php echo esc_html($last_earn->last_error); ?>
+                                    <br>
+                                    <small>
+                                        <?php esc_html_e('Attempts:', 'orangepill-wc'); ?> <?php echo esc_html($last_earn->attempt_count); ?>
+                                        <?php if ($last_earn->last_attempt_at): ?>
+                                            &nbsp;|&nbsp;
+                                            <?php esc_html_e('Last attempt:', 'orangepill-wc'); ?>
+                                            <?php echo esc_html(human_time_diff(strtotime($last_earn->last_attempt_at), current_time('timestamp'))); ?>
+                                            <?php esc_html_e('ago', 'orangepill-wc'); ?>
+                                        <?php endif; ?>
+                                    </small>
+                                    <div style="margin-top: 8px;">
+                                        <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="display: inline;">
+                                            <input type="hidden" name="action" value="orangepill_replay_event" />
+                                            <input type="hidden" name="event_id" value="<?php echo esc_attr($last_earn->id); ?>" />
+                                            <input type="hidden" name="nonce" value="<?php echo esc_attr(wp_create_nonce('orangepill_wc_admin')); ?>" />
+                                            <button
+                                                type="submit"
+                                                class="button button-primary button-small"
+                                                onclick="return confirm('<?php echo esc_js(__('Replay loyalty earn event?\n\nThis will re-send the order.finalized event with the same idempotency key.\n\nIdempotency protection ensures safe replay.', 'orangepill-wc')); ?>');"
+                                            >
+                                                <?php esc_html_e('Replay Event', 'orangepill-wc'); ?>
+                                            </button>
+                                        </form>
+                                    </div>
+                                </div>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                <?php endif; ?>
+
+                <?php // Loyalty Reversals (multiple events) - RULE 13 ?>
+                <?php if (!empty($refund_events)): ?>
+                    <?php
+                    $refund_count = count($refund_events);
+                    $failed_refunds = array_filter($refund_events, function($e) { return $e->status === 'failed'; });
+                    $failed_count = count($failed_refunds);
+                    ?>
+                    <div class="orangepill-metabox-field">
+                        <label>
+                            <?php esc_html_e('Loyalty Reversals:', 'orangepill-wc'); ?>
+                            <span style="font-weight: normal; color: #666;">
+                                (<?php echo esc_html($refund_count); ?> <?php echo esc_html(_n('event', 'events', $refund_count, 'orangepill-wc')); ?>
+                                <?php if ($failed_count > 0): ?>
+                                    &middot; <span style="color: #721c24; font-weight: 600;"><?php echo esc_html($failed_count); ?> failed</span>
+                                <?php endif; ?>)
+                            </span>
+                        </label>
+                        <div class="orangepill-metabox-value">
+                            <?php foreach ($refund_events as $idx => $refund_event): ?>
+                                <?php
+                                $refund_icon = $refund_event->status === 'sent' ? '✅' : ($refund_event->status === 'failed' ? '❌' : '⏳');
+                                $payload = json_decode($refund_event->payload_json, true);
+                                $refund_id = $payload['refund_id'] ?? '?';
+                                $refund_amount = $payload['refund_amount'] ?? '?';
+                                $currency = $payload['currency'] ?? '';
+                                ?>
+                                <div style="margin-bottom: 10px; padding: 8px; background: #f9f9f9; border-left: 3px solid <?php echo $refund_event->status === 'sent' ? '#155724' : ($refund_event->status === 'failed' ? '#721c24' : '#856404'); ?>; border-radius: 3px;">
+                                    <div>
+                                        <span class="orangepill-sync-status orangepill-sync-status-<?php echo esc_attr($refund_event->status); ?>" style="font-size: 11px;">
+                                            <?php echo esc_html($refund_icon . ' ' . ucfirst($refund_event->status)); ?>
+                                        </span>
+                                        <strong style="margin-left: 8px;">
+                                            <?php esc_html_e('Refund', 'orangepill-wc'); ?> #<?php echo esc_html($refund_id); ?>
+                                        </strong>
+                                        <span style="margin-left: 8px; color: #666;">
+                                            <?php echo esc_html($refund_amount . ' ' . $currency); ?>
+                                        </span>
+                                    </div>
+                                    <small class="description" style="display: block; margin-top: 4px;">
+                                        <?php echo esc_html(human_time_diff(strtotime($refund_event->created_at), current_time('timestamp'))); ?>
+                                        <?php esc_html_e('ago', 'orangepill-wc'); ?>
+                                        <?php if ($refund_event->idempotency_key): ?>
+                                            <br>
+                                            <?php esc_html_e('Idempotency Key:', 'orangepill-wc'); ?> <code style="font-size: 10px;"><?php echo esc_html($refund_event->idempotency_key); ?></code>
+                                        <?php endif; ?>
+                                    </small>
+
+                                    <?php if ($refund_event->status === 'failed'): ?>
+                                        <div style="margin-top: 6px; padding: 6px; background: #f8d7da; border-radius: 3px;">
+                                            <strong style="font-size: 11px;"><?php esc_html_e('Error:', 'orangepill-wc'); ?></strong>
+                                            <span style="font-size: 11px;"><?php echo esc_html($refund_event->last_error); ?></span>
+                                            <br>
+                                            <small style="font-size: 10px;">
+                                                <?php esc_html_e('Attempts:', 'orangepill-wc'); ?> <?php echo esc_html($refund_event->attempt_count); ?>
+                                                <?php if ($refund_event->last_attempt_at): ?>
+                                                    &nbsp;|&nbsp;
+                                                    <?php esc_html_e('Last attempt:', 'orangepill-wc'); ?>
+                                                    <?php echo esc_html(human_time_diff(strtotime($refund_event->last_attempt_at), current_time('timestamp'))); ?>
+                                                    <?php esc_html_e('ago', 'orangepill-wc'); ?>
+                                                <?php endif; ?>
+                                            </small>
+                                            <div style="margin-top: 6px;">
+                                                <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="display: inline;">
+                                                    <input type="hidden" name="action" value="orangepill_replay_event" />
+                                                    <input type="hidden" name="event_id" value="<?php echo esc_attr($refund_event->id); ?>" />
+                                                    <input type="hidden" name="nonce" value="<?php echo esc_attr(wp_create_nonce('orangepill_wc_admin')); ?>" />
+                                                    <button
+                                                        type="submit"
+                                                        class="button button-primary button-small"
+                                                        style="font-size: 11px; padding: 2px 8px; height: auto;"
+                                                        onclick="return confirm('<?php echo esc_js(__('Replay loyalty reversal event?\n\nThis will re-send the order.refunded event with the same idempotency key.\n\nIdempotency protection ensures safe replay.', 'orangepill-wc')); ?>');"
+                                                    >
+                                                        <?php esc_html_e('Replay', 'orangepill-wc'); ?>
+                                                    </button>
+                                                </form>
+                                            </div>
+                                        </div>
+                                    <?php endif; ?>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+                    </div>
+                <?php endif; ?>
+            <?php endif; ?>
+
             <?php if (empty($session_id) && empty($payment_id)): ?>
                 <p class="description">
                     <?php esc_html_e('No Orangepill payment data available for this order.', 'orangepill-wc'); ?>

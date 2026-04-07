@@ -1,0 +1,39 @@
+{
+    "name": "orangepill/orangepill-woocommerce",
+    "description": "Accept payments via Orangepill - embedded finance infrastructure for modern commerce platforms",
+    "type": "wordpress-plugin",
+    "license": "GPL-2.0-or-later",
+    "authors": [
+        {
+            "name": "Orangepill",
+            "homepage": "https://orangepill.technology"
+        }
+    ],
+    "require": {
+        "php": ">=7.4"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^9.5",
+        "yoast/phpunit-polyfills": "^1.0"
+    },
+    "autoload": {
+        "classmap": [
+            "includes/",
+            "admin/"
+        ]
+    },
+    "autoload-dev": {
+        "classmap": [
+            "tests/"
+        ]
+    },
+    "scripts": {
+        "test": "phpunit",
+        "test:verbose": "phpunit --verbose",
+        "test:coverage": "phpunit --coverage-html coverage/"
+    },
+    "config": {
+        "sort-packages": true,
+        "optimize-autoloader": true
+    }
+}
