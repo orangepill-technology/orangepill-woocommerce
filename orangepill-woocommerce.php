@@ -88,6 +88,9 @@ function orangepill_wc_init() {
         return;
     }
 
+    // [PR-WC-LOYALTY-1] Check for database upgrades on every load
+    orangepill_wc_check_db_version();
+
     // Initialize payment gateway
     add_filter('woocommerce_payment_gateways', 'orangepill_wc_add_gateway');
 
@@ -261,6 +264,22 @@ function orangepill_wc_dismiss_event() {
 }
 
 /**
+ * Check database version and run migrations if needed
+ *
+ * [PR-WC-LOYALTY-1] This runs on every plugins_loaded to ensure upgrades apply migrations.
+ * Uses option to track DB version (not plugin version, for schema independence).
+ */
+function orangepill_wc_check_db_version() {
+    $current_db_version = 2; // Increment when schema changes
+    $installed_db_version = get_option('orangepill_wc_db_version', 0);
+
+    if ($installed_db_version < $current_db_version) {
+        orangepill_wc_create_sync_events_table();
+        update_option('orangepill_wc_db_version', $current_db_version);
+    }
+}
+
+/**
  * Plugin activation hook
  */
 function orangepill_wc_activate() {
@@ -271,6 +290,11 @@ function orangepill_wc_activate() {
 
     // Create sync events table
     orangepill_wc_create_sync_events_table();
+
+    // Set initial DB version
+    if (!get_option('orangepill_wc_db_version')) {
+        update_option('orangepill_wc_db_version', 2);
+    }
 
     // Flush rewrite rules for webhook endpoint
     flush_rewrite_rules();
@@ -326,10 +350,18 @@ function orangepill_wc_create_sync_events_table() {
     // PR-WC-LOYALTY-1 FIX: Add UNIQUE constraint for dedupe (CRITICAL for concurrent safety)
     $index_exists = $wpdb->get_results("SHOW INDEX FROM $table WHERE Key_name = 'idx_dedupe'");
     if (empty($index_exists)) {
-        // Remove old non-unique idempotency index if exists
+        // Remove old non-unique idempotency index if exists (suppress errors if not present)
         $wpdb->query("ALTER TABLE $table DROP INDEX idx_idempotency");
+
         // Add UNIQUE constraint on (direction, event_type, idempotency_key)
-        $wpdb->query("ALTER TABLE $table ADD UNIQUE KEY idx_dedupe (direction, event_type, idempotency_key)");
+        // If this fails due to duplicate data, it will be logged
+        $result = $wpdb->query("ALTER TABLE $table ADD UNIQUE KEY idx_dedupe (direction, event_type, idempotency_key)");
+
+        if ($result === false) {
+            // Log critical error if UNIQUE constraint fails (likely due to existing duplicates)
+            error_log('CRITICAL: Orangepill UNIQUE constraint failed to apply. Check for duplicate events in wp_orangepill_sync_events table.');
+            error_log('SQL Error: ' . $wpdb->last_error);
+        }
     }
 }
 

@@ -75,6 +75,28 @@ See `tests/README.md` for detailed test documentation.
 3. Go to WooCommerce → Orangepill Settings to configure your API credentials
 4. Enable the payment gateway in WooCommerce → Settings → Payments
 
+### Post-Installation Verification (CRITICAL)
+
+After installation or upgrade, verify the UNIQUE constraint is properly applied:
+
+```bash
+wp eval-file wp-content/plugins/orangepill-woocommerce/verify-db-schema.php
+```
+
+**Expected output:**
+```
+✅ ALL CHECKS PASSED - Database schema is correct!
+   Concurrent safety: ENABLED
+   Duplicate prevention: ACTIVE
+```
+
+**If verification fails:**
+1. Deactivate the plugin
+2. Reactivate the plugin
+3. Run verification again
+
+**Why this matters:** The UNIQUE constraint prevents duplicate events during concurrent order processing. Without it, race conditions can create duplicate loyalty triggers.
+
 ## Configuration
 
 ### Required Settings
