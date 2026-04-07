@@ -61,20 +61,18 @@ class OP_Customer_Sync {
             $customer_data['phone'] = $phone;
         }
 
-        // PR-WC-3b: Record outbound event before API send (with explicit endpoint)
+        // PR-WC-3b: Record outbound event before API send
+        // Store base_url + endpoint separately for environment safety
         $endpoint = '/v4/admin/customers';
-
-        // Store full URL for replay safety (version drift protection)
         $api_settings = $api->get_settings();
-        $full_endpoint = $api_settings['base_url'] . $endpoint;
+        $base_url = $api_settings['base_url'];
 
-        $event_id = OP_Sync_Journal::record_outbound_pending('customer.create', null, $customer_data, $full_endpoint);
+        $event_id = OP_Sync_Journal::record_outbound_pending('customer.create', null, $customer_data, $endpoint, $base_url);
         $event = OP_Sync_Journal::get_event($event_id);
 
-        // Create customer via API with idempotency key (standard header name)
+        // Create customer via API with idempotency key (standard header)
         $result = $api->request('POST', $endpoint, $customer_data, array(
             'Idempotency-Key' => $event->idempotency_key,
-            'X-Idempotency-Key' => $event->idempotency_key, // backward compatibility
         ));
 
         if (is_wp_error($result)) {

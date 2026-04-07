@@ -149,24 +149,22 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
                 'cancel_url' => wc_get_checkout_url(),
             );
 
-            // PR-WC-3b: Record outbound event before API send (with explicit endpoint)
+            // PR-WC-3b: Record outbound event before API send
+            // Store base_url + endpoint separately for environment safety
             $endpoint = '/v4/payments/integrations/' . $this->get_option('integration_id') . '/sessions';
-
-            // Store full URL for replay safety (version drift protection)
             $api_settings = $api->get_settings();
-            $full_endpoint = $api_settings['base_url'] . $endpoint;
+            $base_url = $api_settings['base_url'];
 
-            $event_id = OP_Sync_Journal::record_outbound_pending('checkout.session.create', $order_id, $session_params, $full_endpoint);
+            $event_id = OP_Sync_Journal::record_outbound_pending('checkout.session.create', $order_id, $session_params, $endpoint, $base_url);
             $event = OP_Sync_Journal::get_event($event_id);
 
-            // Create checkout session with idempotency key (standard header name)
+            // Create checkout session with idempotency key (standard header)
             $session = $api->request(
                 'POST',
                 $endpoint,
                 $session_params,
                 array(
                     'Idempotency-Key' => $event->idempotency_key,
-                    'X-Idempotency-Key' => $event->idempotency_key, // backward compatibility
                 )
             );
 

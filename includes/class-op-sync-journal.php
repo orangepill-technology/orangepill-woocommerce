@@ -21,18 +21,25 @@ class OP_Sync_Journal {
      * Plugin is source of truth for outbound events.
      * Generates idempotency_key: woo:{order_id}:{event_type}:{timestamp}
      *
+     * Stores base_url + endpoint separately for environment safety:
+     * - Replay uses current base_url (prevents wrong-environment replays)
+     * - Endpoint is immutable (preserves API version from original send)
+     *
      * @param string $event_type Event type (e.g., 'customer.create', 'checkout.session.create')
      * @param int|null $order_id WooCommerce order ID
      * @param array $payload Request payload
-     * @param string $endpoint API endpoint (e.g., '/v4/admin/customers')
-     * @param string|null $idempotency_key Optional pre-generated idempotency key
+     * @param string $endpoint API endpoint path (e.g., '/v4/admin/customers')
+     * @param string $base_url API base URL (e.g., 'https://api.orangepill.dev')
+     * @param string|null $idempotency_key Optional pre-generated key (must follow format: {system}:{entity_id}:{event_type}:{timestamp})
      * @return int Event ID
      */
-    public static function record_outbound_pending($event_type, $order_id, $payload, $endpoint, $idempotency_key = null) {
+    public static function record_outbound_pending($event_type, $order_id, $payload, $endpoint, $base_url, $idempotency_key = null) {
         global $wpdb;
         $table = $wpdb->prefix . 'orangepill_sync_events';
 
         // Generate idempotency key if not provided (plugin is source of truth)
+        // Format: {system}:{entity_id}:{event_type}:{timestamp} (CRITICAL: used as correlation ID)
+        // This format is IMMUTABLE - changes break cross-system tracing (Woo logs → Orangepill logs → Database)
         if (!$idempotency_key) {
             $idempotency_key = sprintf(
                 'woo:%s:%s:%d',
@@ -51,6 +58,7 @@ class OP_Sync_Journal {
             'order_id' => $order_id,
             'payload_json' => wp_json_encode($safe_payload),
             'endpoint' => $endpoint,
+            'base_url' => $base_url,
             'status' => 'pending',
             'idempotency_key' => $idempotency_key,
             'attempt_count' => 0,
@@ -215,17 +223,22 @@ class OP_Sync_Journal {
         $api = new OP_API_Client();
 
         try {
-            // PR-WC-3b FIX: Use stored endpoint directly (no derivation)
+            // PR-WC-3b FIX: Use current base_url + stored endpoint (environment safety + version immutability)
+            // Replay hits CURRENT environment (prevents wrong-env replays) but uses ORIGINAL API version
             $endpoint = $event->endpoint;
 
             if (empty($endpoint)) {
                 return array('success' => false, 'result' => 'invalid_event', 'error' => 'Event missing endpoint');
             }
 
-            // Re-send EXACT stored payload with ORIGINAL idempotency key (standard header name)
-            $response = $api->request('POST', $endpoint, $payload, array(
+            // Get current base_url from plugin settings (not stored base_url)
+            $api_settings = $api->get_settings();
+            $current_base_url = $api_settings['base_url'];
+            $full_url = $current_base_url . $endpoint;
+
+            // Re-send EXACT stored payload with ORIGINAL idempotency key (standard header)
+            $response = $api->request('POST', $full_url, $payload, array(
                 'Idempotency-Key' => $event->idempotency_key,
-                'X-Idempotency-Key' => $event->idempotency_key, // backward compatibility
             ));
 
             self::mark_sent($event_id, $response);
@@ -277,8 +290,10 @@ class OP_Sync_Journal {
         $idempotency_key = $payload['event_id'] ?? $payload['idempotency_key'] ?? null;
 
         // PR-WC-3b FIX: Fallback to payload hash if no idempotency key (provider inconsistencies)
+        // Canonicalize before hashing to ensure deterministic results
         if (!$idempotency_key) {
-            $idempotency_key = 'hash:' . hash('sha256', wp_json_encode($payload));
+            $canonical = self::canonicalize_for_hash($payload);
+            $idempotency_key = 'hash:' . hash('sha256', wp_json_encode($canonical));
         }
 
         // PR-WC-3b FIX: Guard against duplicate webhooks
@@ -391,6 +406,31 @@ class OP_Sync_Journal {
         }
 
         return $safe;
+    }
+
+    /**
+     * Canonicalize payload for deterministic hashing
+     *
+     * Recursively sorts array keys to ensure same payload = same hash
+     * regardless of key order (critical for deduplication)
+     *
+     * @param array $data Payload to canonicalize
+     * @return array Canonicalized payload (keys sorted recursively)
+     */
+    private static function canonicalize_for_hash($data) {
+        if (!is_array($data)) {
+            return $data;
+        }
+
+        ksort($data);
+
+        foreach ($data as $key => $value) {
+            if (is_array($value)) {
+                $data[$key] = self::canonicalize_for_hash($value);
+            }
+        }
+
+        return $data;
     }
 
 }

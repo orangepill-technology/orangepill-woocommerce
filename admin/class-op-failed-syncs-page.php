@@ -124,7 +124,7 @@ class OP_Failed_Syncs_Page {
                                         <button
                                             type="submit"
                                             class="button button-primary button-small"
-                                            onclick="return confirm('<?php echo esc_js(__('Replay this event?\n\nThis will re-send the original request to Orangepill using the same data.', 'orangepill-wc')); ?>');"
+                                            onclick="return confirm('<?php echo esc_js(__('Replay this event?\n\nThis will re-send the original request to Orangepill using the same data and idempotency key.\n\nIdempotency protection ensures safe replay (no duplicate charges or side effects).', 'orangepill-wc')); ?>');"
                                         >
                                             <?php esc_html_e('Replay', 'orangepill-wc'); ?>
                                         </button>

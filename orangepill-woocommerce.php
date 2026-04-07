@@ -289,6 +289,7 @@ function orangepill_wc_create_sync_events_table() {
         payload_json LONGTEXT NOT NULL,
         response_json LONGTEXT NULL,
         endpoint VARCHAR(255) NOT NULL DEFAULT '',
+        base_url VARCHAR(255) NOT NULL DEFAULT '',
         status VARCHAR(32) NOT NULL DEFAULT 'pending',
         idempotency_key VARCHAR(255) NULL,
         attempt_count INT UNSIGNED NOT NULL DEFAULT 0,
@@ -309,6 +310,12 @@ function orangepill_wc_create_sync_events_table() {
     $column_exists = $wpdb->get_results("SHOW COLUMNS FROM $table LIKE 'endpoint'");
     if (empty($column_exists)) {
         $wpdb->query("ALTER TABLE $table ADD COLUMN endpoint VARCHAR(255) NOT NULL DEFAULT '' AFTER response_json");
+    }
+
+    // PR-WC-3b FIX: Add base_url column if table already exists (environment safety)
+    $column_exists = $wpdb->get_results("SHOW COLUMNS FROM $table LIKE 'base_url'");
+    if (empty($column_exists)) {
+        $wpdb->query("ALTER TABLE $table ADD COLUMN base_url VARCHAR(255) NOT NULL DEFAULT '' AFTER endpoint");
     }
 }
 
