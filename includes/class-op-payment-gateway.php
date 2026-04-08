@@ -2,7 +2,14 @@
 /**
  * Orangepill Payment Gateway
  *
- * WooCommerce payment gateway implementation for Orangepill
+ * WooCommerce payment gateway implementation for Orangepill.
+ *
+ * PR-OP-WOO-INTEGRATION-CORE-1:
+ * - Part 1: Customer mapping (get_or_create → customer_id in session)
+ * - Part 2: Channel propagation (_orangepill_channel = 'web' on order meta)
+ * - Part 3: Checkout session via POST /v4/checkout/sessions
+ * - Part 4: Wallet/loyalty pre-application before redirect
+ * - Part 8: No null customer_id; error surfaced clearly
  */
 
 // Exit if accessed directly
@@ -15,22 +22,19 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
      * Constructor
      */
     public function __construct() {
-        $this->id = 'orangepill';
-        $this->icon = '';
-        $this->has_fields = false;
-        $this->method_title = __('Orangepill', 'orangepill-wc');
+        $this->id                 = 'orangepill';
+        $this->icon               = '';
+        $this->has_fields         = true; // We render the wallet widget
+        $this->method_title       = __('Orangepill', 'orangepill-wc');
         $this->method_description = __('Accept payments via Orangepill embedded finance platform', 'orangepill-wc');
 
-        // Load settings
         $this->init_form_fields();
         $this->init_settings();
 
-        // Get settings
-        $this->title = $this->get_option('title');
+        $this->title       = $this->get_option('title');
         $this->description = $this->get_option('description');
-        $this->enabled = $this->get_option('enabled');
+        $this->enabled     = $this->get_option('enabled');
 
-        // Save settings
         add_action('woocommerce_update_options_payment_gateways_' . $this->id, array($this, 'process_admin_options'));
     }
 
@@ -40,64 +44,109 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
     public function init_form_fields() {
         $this->form_fields = array(
             'enabled' => array(
-                'title' => __('Enable/Disable', 'orangepill-wc'),
-                'type' => 'checkbox',
-                'label' => __('Enable Orangepill payment gateway', 'orangepill-wc'),
+                'title'   => __('Enable/Disable', 'orangepill-wc'),
+                'type'    => 'checkbox',
+                'label'   => __('Enable Orangepill payment gateway', 'orangepill-wc'),
                 'default' => 'no',
             ),
             'title' => array(
-                'title' => __('Title', 'orangepill-wc'),
-                'type' => 'text',
+                'title'       => __('Title', 'orangepill-wc'),
+                'type'        => 'text',
                 'description' => __('Payment method title that customers see during checkout', 'orangepill-wc'),
-                'default' => __('Orangepill', 'orangepill-wc'),
-                'desc_tip' => true,
+                'default'     => __('Orangepill', 'orangepill-wc'),
+                'desc_tip'    => true,
             ),
             'description' => array(
-                'title' => __('Description', 'orangepill-wc'),
-                'type' => 'textarea',
+                'title'       => __('Description', 'orangepill-wc'),
+                'type'        => 'textarea',
                 'description' => __('Payment method description that customers see during checkout', 'orangepill-wc'),
-                'default' => __('Pay securely via Orangepill', 'orangepill-wc'),
-                'desc_tip' => true,
+                'default'     => __('Pay securely via Orangepill', 'orangepill-wc'),
+                'desc_tip'    => true,
             ),
             'api_key' => array(
-                'title' => __('API Key', 'orangepill-wc'),
-                'type' => 'password',
+                'title'       => __('API Key', 'orangepill-wc'),
+                'type'        => 'password',
                 'description' => __('Your Orangepill integration API key', 'orangepill-wc'),
-                'desc_tip' => true,
+                'desc_tip'    => true,
             ),
             'api_base_url' => array(
-                'title' => __('API Base URL', 'orangepill-wc'),
-                'type' => 'text',
+                'title'       => __('API Base URL', 'orangepill-wc'),
+                'type'        => 'text',
                 'description' => __('Orangepill API base URL (leave default for production)', 'orangepill-wc'),
-                'default' => 'https://api.orangepill.dev',
-                'desc_tip' => true,
+                'default'     => 'https://console.orangepill.cloud',
+                'desc_tip'    => true,
             ),
             'integration_id' => array(
-                'title' => __('Integration ID', 'orangepill-wc'),
-                'type' => 'text',
+                'title'       => __('Integration ID', 'orangepill-wc'),
+                'type'        => 'text',
                 'description' => __('Your Orangepill integration ID', 'orangepill-wc'),
-                'desc_tip' => true,
+                'desc_tip'    => true,
             ),
             'merchant_id' => array(
-                'title' => __('Merchant ID', 'orangepill-wc'),
-                'type' => 'text',
+                'title'       => __('Merchant ID', 'orangepill-wc'),
+                'type'        => 'text',
                 'description' => __('Your Orangepill merchant ID', 'orangepill-wc'),
-                'desc_tip' => true,
+                'desc_tip'    => true,
             ),
             'webhook_secret' => array(
-                'title' => __('Webhook Secret', 'orangepill-wc'),
-                'type' => 'password',
+                'title'       => __('Webhook Secret', 'orangepill-wc'),
+                'type'        => 'password',
                 'description' => __('Your Orangepill webhook signing secret', 'orangepill-wc'),
-                'desc_tip' => true,
+                'desc_tip'    => true,
+            ),
+            'checkout_ui_url' => array(
+                'title'       => __('Checkout UI URL', 'orangepill-wc'),
+                'type'        => 'text',
+                'description' => __('Base URL of the Orangepill hosted checkout UI (leave default for production)', 'orangepill-wc'),
+                'default'     => 'https://checkout.orangepill.cloud',
+                'desc_tip'    => true,
+            ),
+            'webhook_public_url' => array(
+                'title'       => __('Public Webhook URL', 'orangepill-wc'),
+                'type'        => 'text',
+                'description' => __('Override the webhook callback URL sent to Orangepill. Required for local dev behind ngrok. Leave empty to use the auto-generated WooCommerce API URL.', 'orangepill-wc'),
+                'default'     => '',
+                'placeholder' => WC()->api_request_url('orangepill-webhook'),
+                'desc_tip'    => false,
             ),
         );
     }
 
     /**
+     * Render loyalty wallet widget on checkout page (Part 4)
+     *
+     * Shows available loyalty balance and lets the customer opt in before
+     * the form is submitted. The selection is passed as a hidden field so
+     * process_payment() can apply it to the session.
+     */
+    public function payment_fields() {
+        // Standard description
+        if ($this->description) {
+            echo wp_kses_post(wpautop(wptexturize($this->description)));
+        }
+
+        // Wallet widget — only for logged-in users; populated via JS
+        if (is_user_logged_in()) {
+            echo '<div id="orangepill-wallet-widget" style="margin-top:12px;" data-loading="1">';
+            echo '<span class="op-wallet-loading">' . esc_html__('Checking loyalty balance...', 'orangepill-wc') . '</span>';
+            echo '</div>';
+            echo '<input type="hidden" name="orangepill_apply_wallet" id="orangepill_apply_wallet" value="0" />';
+            echo '<input type="hidden" name="orangepill_wallet_amount" id="orangepill_wallet_amount" value="" />';
+        }
+    }
+
+    /**
      * Process payment
      *
-     * @param int $order_id Order ID
-     * @return array Redirect data or error
+     * Flow:
+     * 1. Get/create Orangepill customer (logged-in users only)
+     * 2. Store channel on order meta (_orangepill_channel = 'web')
+     * 3. Create checkout session via POST /v4/checkout/sessions
+     * 4. Apply wallet balance if customer opted in (Part 4)
+     * 5. Redirect to hosted checkout UI
+     *
+     * @param int $order_id WooCommerce order ID
+     * @return array Result array (success/failure + redirect URL)
      */
     public function process_payment($order_id) {
         $order = wc_get_order($order_id);
@@ -108,77 +157,96 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
         }
 
         try {
-            $api = new OP_API_Client();
+            // ─── Part 2: Channel propagation ───────────────────────────────
+            $order->update_meta_data('_orangepill_channel', 'web');
+            $order->save();
 
-            // Step 1: Sync customer (get or create customer_id)
+            // ─── Part 1: Customer mapping ──────────────────────────────────
             $customer_id = null;
-            $user_id = $order->get_user_id();
+            $user_id     = $order->get_user_id();
 
             if ($user_id > 0) {
                 $customer_sync = new OP_Customer_Sync();
-                $customer_result = $customer_sync->sync_customer($user_id);
+                $sync_result   = $customer_sync->get_or_create($user_id, $order);
 
-                if (is_wp_error($customer_result)) {
+                if (is_wp_error($sync_result)) {
+                    // Part 8: Surface the error clearly — do not proceed with null customer
                     OP_Logger::error(
-                        'customer_sync_failed',
-                        'Failed to sync customer: ' . $customer_result->get_error_message(),
-                        array(
-                            'order_id' => $order_id,
-                            'user_id' => $user_id,
-                        )
+                        'checkout_customer_sync_failed',
+                        'Cannot create checkout session without customer: ' . $sync_result->get_error_message(),
+                        array('order_id' => $order_id, 'user_id' => $user_id)
                     );
-                    // Continue without customer_id (guest checkout)
-                } else {
-                    $customer_id = $customer_result;
+                    wc_add_notice(
+                        __('Unable to set up your customer account. Please try again or contact support.', 'orangepill-wc'),
+                        'error'
+                    );
+                    return array('result' => 'failure');
                 }
+
+                $customer_id = $sync_result;
             }
 
-            // Step 2: Create checkout session
+            // ─── Part 3: Checkout session creation ─────────────────────────
+            $api = new OP_API_Client();
+
             $session_params = array(
-                'merchant_id' => $this->get_option('merchant_id'),
-                'amount' => array(
-                    'value' => $order->get_total(),
-                    'currency' => $order->get_currency(),
-                ),
-                'customer_id' => $customer_id,
-                'metadata' => array(
-                    'channel' => 'woocommerce',
+                'merchant_id'     => $this->get_option('merchant_id'),
+                'amount'          => (string) $order->get_total(),
+                'currency'        => $order->get_currency(),
+                'order_reference' => 'WC_' . $order_id,
+                'success_url'     => $this->get_return_url($order),
+                'cancel_url'      => wc_get_checkout_url(),
+                'metadata'        => array(
+                    'channel'      => 'web',
                     'woo_order_id' => (string) $order_id,
                 ),
-                'success_url' => $this->get_return_url($order),
-                'cancel_url' => wc_get_checkout_url(),
+                'callback'        => array(
+                    'url'    => $this->get_webhook_callback_url(),
+                    'events' => array('checkout.session.completed', 'checkout.session.failed'),
+                ),
             );
 
-            // PR-WC-3b: Record outbound event before API send
-            // Store base_url + endpoint separately for environment safety
-            $endpoint = '/v4/payments/integrations/' . $this->get_option('integration_id') . '/sessions';
-            $api_settings = $api->get_settings();
-            $base_url = $api_settings['base_url'];
+            // Pass customer_id if we have one (never inline data for registered users)
+            if ($customer_id) {
+                $session_params['customer_id'] = $customer_id;
+            } elseif ($order->get_billing_email()) {
+                // Guest checkout: pass inline customer data so Orangepill can track it
+                $session_params['customer'] = array(
+                    'email' => $order->get_billing_email(),
+                    'name'  => trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name()),
+                    'phone' => $order->get_billing_phone() ?: null,
+                );
+            }
 
-            $event_id = OP_Sync_Journal::record_outbound_pending('checkout.session.create', $order_id, $session_params, $endpoint, $base_url);
+            $endpoint    = '/v4/checkout/sessions';
+            $api_settings = $api->get_settings();
+
+            $event_id = OP_Sync_Journal::record_outbound_pending(
+                'checkout.session.create',
+                $order_id,
+                $session_params,
+                $endpoint,
+                $api_settings['base_url']
+            );
             $event = OP_Sync_Journal::get_event($event_id);
 
-            // Create checkout session with idempotency key (standard header)
             $session = $api->request(
                 'POST',
                 $endpoint,
                 $session_params,
-                array(
-                    'Idempotency-Key' => $event->idempotency_key,
-                )
+                array('Idempotency-Key' => $event->idempotency_key)
             );
 
             if (is_wp_error($session)) {
-                // PR-WC-3b: Mark event as failed
                 OP_Sync_Journal::mark_failed($event_id, $session->get_error_message());
 
                 OP_Logger::error(
                     'checkout_session_failed',
                     'Failed to create checkout session: ' . $session->get_error_message(),
                     array(
-                        'order_id' => $order_id,
-                        'event_id' => $event_id,
-                        'idempotency_key' => $event->idempotency_key, // Correlation ID
+                        'order_id'        => $order_id,
+                        'event_id'        => $event_id,
+                        'idempotency_key' => $event->idempotency_key,
                     )
                 );
 
@@ -186,42 +254,91 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
                 return array('result' => 'failure');
             }
 
-            // PR-WC-3b: Mark event as sent
             OP_Sync_Journal::mark_sent($event_id, $session);
 
-            // Step 3: Store session_id in order meta
-            $order->update_meta_data('_orangepill_session_id', $session['id']);
+            $session_id    = $session['id'] ?? null;
+            $client_secret = $session['client_secret'] ?? null;
+
+            if (empty($session_id) || empty($client_secret)) {
+                OP_Logger::error(
+                    'checkout_session_invalid',
+                    'Checkout session response missing id or client_secret',
+                    array('order_id' => $order_id, 'response' => $session)
+                );
+                wc_add_notice(__('Invalid payment session response. Please try again.', 'orangepill-wc'), 'error');
+                return array('result' => 'failure');
+            }
+
+            // ─── Part 4: Wallet application ────────────────────────────────
+            // If customer opted to apply loyalty balance, apply it to the session
+            // before redirecting. A failure here is non-fatal — we log and continue.
+            $apply_wallet  = isset($_POST['orangepill_apply_wallet']) && $_POST['orangepill_apply_wallet'] === '1';
+            $wallet_amount = isset($_POST['orangepill_wallet_amount']) ? sanitize_text_field($_POST['orangepill_wallet_amount']) : '';
+
+            if ($apply_wallet && $customer_id && !empty($wallet_amount)) {
+                $loyalty = new OP_Loyalty();
+                $apply_result = $loyalty->apply_wallet_to_session($session_id, $wallet_amount);
+
+                if (is_wp_error($apply_result)) {
+                    OP_Logger::warning(
+                        'wallet_apply_failed',
+                        'Failed to apply wallet to session (continuing without): ' . $apply_result->get_error_message(),
+                        array(
+                            'order_id'   => $order_id,
+                            'session_id' => $session_id,
+                            'amount'     => $wallet_amount,
+                        )
+                    );
+                    // Non-fatal: continue to checkout without wallet applied
+                } else {
+                    $order->update_meta_data('_orangepill_wallet_applied', $wallet_amount);
+                    OP_Logger::info(
+                        'wallet_applied',
+                        'Wallet balance applied to session',
+                        array(
+                            'order_id'   => $order_id,
+                            'session_id' => $session_id,
+                            'amount'     => $wallet_amount,
+                        )
+                    );
+                }
+            }
+
+            // Store session metadata on order
+            $order->update_meta_data('_orangepill_session_id', $session_id);
             if ($customer_id) {
                 $order->update_meta_data('_orangepill_customer_id', $customer_id);
             }
             $order->save();
 
-            // Step 4: Log event
             OP_Logger::info(
                 'checkout_session_created',
-                'Checkout session created successfully',
+                'Checkout session created',
                 array(
-                    'order_id' => $order_id,
-                    'session_id' => $session['id'],
-                    'customer_id' => $customer_id,
-                    'event_id' => $event_id,
-                    'idempotency_key' => $event->idempotency_key, // Correlation ID
+                    'order_id'        => $order_id,
+                    'session_id'      => $session_id,
+                    'customer_id'     => $customer_id,
+                    'channel'         => 'web',
+                    'event_id'        => $event_id,
+                    'idempotency_key' => $event->idempotency_key,
                 )
             );
 
-            // Step 5: Redirect to Orangepill hosted checkout
+            // ─── Redirect to hosted checkout UI ───────────────────────────
+            // client_secret goes in the URL fragment (never query string — not sent to server)
+            $checkout_ui_base = rtrim($this->get_option('checkout_ui_url', 'https://checkout.orangepill.cloud'), '/');
+            $checkout_url     = $checkout_ui_base . '/sessions/' . $session_id . '#cs=' . $client_secret;
+
             return array(
-                'result' => 'success',
-                'redirect' => $session['checkout_url'],
+                'result'   => 'success',
+                'redirect' => $checkout_url,
             );
 
         } catch (Exception $e) {
             OP_Logger::error(
                 'payment_processing_error',
                 'Payment processing exception: ' . $e->getMessage(),
-                array(
-                    'order_id' => $order_id,
-                )
+                array('order_id' => $order_id)
             );
 
             wc_add_notice(__('Payment processing failed. Please try again.', 'orangepill-wc'), 'error');
@@ -230,16 +347,30 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
     }
 
     /**
-     * Check if gateway is available
+     * Get the webhook callback URL to pass in checkout session creation.
      *
-     * @return bool
+     * Uses the "Public Webhook URL" setting when set (required for local dev
+     * behind ngrok). Falls back to the auto-generated WooCommerce API URL
+     * for production where the store has a real public hostname.
+     *
+     * @return string Fully-qualified webhook URL
+     */
+    private function get_webhook_callback_url() {
+        $override = trim($this->get_option('webhook_public_url', ''));
+        if (!empty($override)) {
+            return rtrim($override, '/');
+        }
+        return WC()->api_request_url('orangepill-webhook');
+    }
+
+    /**
+     * Check if gateway is available
      */
     public function is_available() {
-        if ($this->enabled !== 'yes') {
+        if (!parent::is_available()) {
             return false;
         }
 
-        // Check required settings
         if (empty($this->get_option('api_key'))) {
             return false;
         }

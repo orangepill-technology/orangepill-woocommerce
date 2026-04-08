@@ -239,6 +239,26 @@
     visibility: visible;
 }
 
+/* ─── My Account Dashboard Widget ─────────────────────────────────────── */
+.orangepill-dashboard-widget {
+    background: #fff8f0;
+    border: 1px solid #f0c040;
+    border-radius: 4px;
+    padding: 16px 20px;
+    margin: 20px 0;
+}
+
+.orangepill-dashboard-widget h3 {
+    margin: 0 0 8px 0;
+    font-size: 15px;
+    color: #1d2327;
+}
+
+.orangepill-dashboard-widget p {
+    margin: 0;
+}
+
+/* ─── Utilities ────────────────────────────────────────────────────────── */
 /* Utilities */
 .orangepill-status-card .description {
     margin-top: 8px;
