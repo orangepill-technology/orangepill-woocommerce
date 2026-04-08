@@ -132,7 +132,7 @@ class OP_My_Account {
         $wallets = $loyalty->get_wallets($customer_id);
 
         if (is_wp_error($wallets)) {
-            echo '<p class="woocommerce-error">' . esc_html__('Unable to load loyalty balance at this time. Please try again later.', 'orangepill-wc') . '</p>';
+            echo '<p>' . esc_html__('Loyalty balance is not available yet. Check back after your first completed order.', 'orangepill-wc') . '</p>';
             return;
         }
 
@@ -189,7 +189,7 @@ class OP_My_Account {
         $result  = $loyalty->get_incentives($customer_id, $page, 20);
 
         if (is_wp_error($result)) {
-            echo '<p class="woocommerce-error">' . esc_html__('Unable to load rewards history at this time. Please try again later.', 'orangepill-wc') . '</p>';
+            echo '<p>' . esc_html__('Rewards history is not available yet. Check back after your first completed order.', 'orangepill-wc') . '</p>';
             return;
         }
 
