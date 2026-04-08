@@ -183,10 +183,110 @@ These tests are designed to run in CI/CD pipelines:
     vendor/bin/phpunit
 ```
 
+---
+
+## Manual Test Steps — PR-WC-CHECKOUT-WALLET-UX-1
+
+These steps require a running WooCommerce + Orangepill dev environment.
+
+### Prerequisite
+
+- Logged-in WooCommerce customer with a completed prior order (so `_orangepill_customer_id` is set in user meta)
+- Orangepill customer must have a spendable wallet balance > 0
+
+---
+
+### Checkout — wallet widget appears when balance exists
+
+1. Log in as a customer who has an Orangepill customer ID
+2. Add a product to cart → go to Checkout
+3. Select "Orangepill" as payment method
+4. **Expected**: A compact rewards widget appears below the payment description:
+   ```
+   Rewards balance available: X,XXX COP
+   [ ] Apply rewards balance to this purchase
+   ```
+5. Open browser DevTools → Network → confirm AJAX call to `/?action=orangepill_get_wallet_balance` returns `{ wallet: { ... } }`
+
+---
+
+### Checkout — wallet widget hidden when no balance
+
+1. Log in as a customer with zero spendable balance (or no Orangepill account)
+2. Add a product to cart → go to Checkout
+3. Select "Orangepill"
+4. **Expected**: No rewards widget appears; the payment field shows only the description
+
+---
+
+### Checkout — apply-wallet called after session creation
+
+1. Log in as a customer with spendable balance
+2. Checkout → select Orangepill → check "Apply rewards balance to this purchase"
+3. Click "Place Order"
+4. **Expected** (in WooCommerce → Orangepill Sync Log):
+   - `checkout_session_created` event logged ← session created first
+   - `wallet_applied` event logged ← apply called after
+5. **Expected**: Redirect to Orangepill hosted checkout UI
+
+---
+
+### Checkout — apply-wallet failure does not corrupt checkout flow
+
+1. Temporarily point API to a wrong URL (or simulate backend failure)
+2. Check "Apply rewards balance" → Place Order
+3. **Expected**:
+   - Sync Log shows `wallet_apply_failed` warning (not error)
+   - Redirect to Orangepill checkout UI still happens
+   - Order created normally in WooCommerce
+
+---
+
+### My Account — Rewards Balance page
+
+1. Log in as a customer with `_orangepill_customer_id` set
+2. Navigate to `/my-account/op-loyalty/`
+3. **If backend `GET /v4/customers/:id/wallets` is live**:
+   - Table shows wallet name, balance, available-to-spend, currency
+   - "View Rewards History" button links to `/my-account/op-rewards/`
+4. **If backend not yet live**:
+   - Friendly placeholder: "Rewards balance is not available yet…"
+   - No error message shown to customer
+
+---
+
+### My Account — Rewards History page
+
+1. Navigate to `/my-account/op-rewards/`
+2. **If backend `GET /v4/customers/:id/incentives` is live**:
+   - Table shows: Date, Type, Description, Amount, Status
+   - Pagination links appear if total > 20
+3. **If backend not yet live**:
+   - Friendly placeholder: "Rewards history is not available yet…"
+
+---
+
+### My Account — Dashboard widget
+
+1. Navigate to `/my-account/` (dashboard)
+2. **If balance > 0**:
+   - Widget appears: "Rewards Balance: X,XXX COP | View details →"
+3. **If balance = 0 or no wallet**:
+   - No widget shown (silent)
+
+---
+
+### Integrity checks
+
+| Check | How to verify |
+|-------|--------------|
+| Woo never computes balances locally | Grep codebase for `spendable_balance =` assignments — there should be none outside API response parsing |
+| Woo does not mutate order totals | Confirm order total in WC admin is unchanged after wallet apply |
+| Wallet ID not exposed in HTML | Inspect checkout page source — `orangepill_wallet_id` field should be empty until JS populates it |
+
 ## Contact
 
-For questions about the test suite or PR-WC-LOYALTY-1 implementation:
-- Review the main PR specification
-- Check `includes/class-op-order-sync.php` for `order.finalized` logic
-- Check `includes/class-op-refund-sync.php` for `order.refunded` logic
-- Check `includes/class-op-sync-journal.php` for deduplication logic
+For questions about the test suite or implementation:
+- PR-WC-LOYALTY-1: `includes/class-op-order-sync.php`, `includes/class-op-refund-sync.php`
+- PR-WC-CHECKOUT-WALLET-UX-1: `includes/class-op-loyalty.php`, `includes/class-op-my-account.php`, `assets/js/checkout.js`
+- Sync journal deduplication: `includes/class-op-sync-journal.php`

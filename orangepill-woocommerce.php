@@ -263,7 +263,8 @@ function orangepill_wc_enqueue_checkout_assets() {
         'ajax_url' => admin_url('admin-ajax.php'),
         'nonce'    => wp_create_nonce('orangepill_wc_checkout'),
         'i18n'     => array(
-            'apply_balance' => __('Apply {amount} {currency} loyalty balance to this order', 'orangepill-wc'),
+            'available_label' => __('Rewards balance available:', 'orangepill-wc'),
+            'apply_label'     => __('Apply rewards balance to this purchase', 'orangepill-wc'),
         ),
     ));
 }
