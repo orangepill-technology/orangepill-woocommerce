@@ -15,6 +15,12 @@
             testConnection();
         });
 
+        // Webhook registration retry button handler
+        $('#orangepill-retry-webhook').on('click', function(e) {
+            e.preventDefault();
+            retryWebhookRegistration();
+        });
+
         // Toggle details in sync log
         $('.orangepill-toggle-details').on('click', function() {
             var target = $(this).data('target');
@@ -134,6 +140,84 @@
                 $(this).remove();
             });
         });
+    }
+
+    /**
+     * Retry integration webhook registration
+     */
+    function retryWebhookRegistration() {
+        var $button  = $('#orangepill-retry-webhook');
+        var $spinner = $('#orangepill-webhook-spinner');
+        var $card    = $('#orangepill-webhook-status-card');
+
+        $button.prop('disabled', true);
+        $spinner.addClass('is-active');
+
+        $.ajax({
+            url: orangepillWC.ajax_url,
+            type: 'POST',
+            data: {
+                action: 'orangepill_retry_webhook_registration',
+                nonce: orangepillWC.nonce
+            },
+            success: function(response) {
+                if (response.success) {
+                    updateWebhookStatus(response.data);
+                } else {
+                    showError(response.data.message || 'Webhook registration failed');
+                }
+            },
+            error: function(xhr, status, error) {
+                showError('AJAX request failed: ' + error);
+            },
+            complete: function() {
+                $button.prop('disabled', false);
+                $spinner.removeClass('is-active');
+            }
+        });
+    }
+
+    /**
+     * Update webhook registration status display
+     */
+    function updateWebhookStatus(data) {
+        var $card = $('#orangepill-webhook-status-card');
+        var html  = '';
+
+        if (data.success) {
+            html += '<div class="orangepill-status-indicator orangepill-status-success">';
+            html += '<span class="dashicons dashicons-yes-alt"></span>';
+            html += '<span>Registered</span>';
+            html += '</div>';
+            if (data.webhook_id) {
+                html += '<p class="description">Webhook ID: ' + escapeHtml(data.webhook_id) + '</p>';
+            }
+        } else {
+            html += '<div class="orangepill-status-indicator orangepill-status-error">';
+            html += '<span class="dashicons dashicons-warning"></span>';
+            html += '<span>Registration failed</span>';
+            html += '</div>';
+            html += '<p class="description" style="color: #d63638;">' + escapeHtml(data.message) + '</p>';
+        }
+
+        html += '<div style="margin-top: 15px;">';
+        html += '<button type="button" id="orangepill-retry-webhook" class="button button-secondary">Retry Registration</button>';
+        html += '<span id="orangepill-webhook-spinner" class="spinner" style="float: none; margin: 0 10px;"></span>';
+        html += '</div>';
+
+        $card.html(html);
+
+        // Reattach event handler to new button
+        $('#orangepill-retry-webhook').on('click', function(e) {
+            e.preventDefault();
+            retryWebhookRegistration();
+        });
+
+        if (data.success) {
+            showNotice('Webhook registered successfully!', 'success');
+        } else {
+            showNotice('Webhook registration failed: ' + data.message, 'error');
+        }
     }
 
     /**

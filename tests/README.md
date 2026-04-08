@@ -185,6 +185,72 @@ These tests are designed to run in CI/CD pipelines:
 
 ---
 
+## Manual Test Steps — PR-WC-INTEGRATION-WEBHOOKS-1
+
+These steps require a running WooCommerce + Orangepill dev environment with valid API credentials.
+
+### Settings save triggers webhook registration
+
+1. Go to WooCommerce → Orangepill Settings
+2. Confirm API Key and Integration ID are filled in
+3. Click **Save Settings**
+4. **Expected**: Webhook Registration panel shows **Registered ✅** with a webhook ID
+5. Check Sync Log for `integration_webhook_registered` or `integration_webhook_updated`
+
+---
+
+### Retry Registration button
+
+1. Clear the webhook registration (or intentionally break the API key temporarily)
+2. Go to Settings page — panel shows **Registration failed** or **Not registered**
+3. Click **Retry Registration**
+4. **Expected**: Panel updates live (no page reload); shows Registered ✅ on success or error message on failure
+
+---
+
+### Webhook delivery path is logged
+
+1. Complete a successful payment
+2. Go to WooCommerce → Orangepill Sync Log
+3. Find `checkout_session_webhook_path` entry
+4. **Expected**:
+   - If integration webhook registered: `webhook_path: integration_webhook`
+   - If not registered: `webhook_path: session_callback_fallback`
+
+---
+
+### Successful payment arrives via integration webhook
+
+1. Ensure webhook is registered (panel shows ✅)
+2. Complete a test payment
+3. **Expected**: WooCommerce order transitions to **Processing** without session-level callback
+
+---
+
+### Expired session cancels pending order
+
+1. Create an order (select Orangepill, do not pay)
+2. Simulate a `checkout.session.expired` webhook POST to `/?wc-api=orangepill-webhook` with valid HMAC signature
+3. **Expected**: Order transitions to **Cancelled**; Sync Log shows `checkout_session_expired`
+
+---
+
+### Expired event ignored on completed order
+
+1. Take a completed (paid) order
+2. Send `checkout.session.expired` for its session ID
+3. **Expected**: Order status unchanged; Sync Log shows `webhook_terminal_state_protected`
+
+---
+
+### Duplicate webhook URL detection
+
+1. Manually register a second webhook with the same URL via Orangepill API (or simulate two entries)
+2. Click Retry Registration
+3. **Expected**: Sync Log shows `integration_webhook_duplicate_url` warning with both IDs; first webhook updated deterministically
+
+---
+
 ## Manual Test Steps — PR-WC-CHECKOUT-WALLET-UX-1
 
 These steps require a running WooCommerce + Orangepill dev environment.
