@@ -40,7 +40,7 @@ class OP_API_Client {
 
         $this->base_url = !empty($settings['api_base_url'])
             ? rtrim($settings['api_base_url'], '/')
-            : 'https://api.orangepill.dev';
+            : 'https://console.orangepill.cloud';
 
         $this->api_key = $settings['api_key'] ?? '';
         $this->integration_id = $settings['integration_id'] ?? '';
@@ -48,13 +48,13 @@ class OP_API_Client {
     }
 
     /**
-     * Create checkout session
+     * Create checkout session (SPRINT-034: Session-Based Checkout)
      *
      * @param array $params Session parameters
      * @return array|WP_Error Response data or error
      */
     public function create_checkout_session($params) {
-        $endpoint = '/v4/payments/integrations/' . $this->integration_id . '/sessions';
+        $endpoint = '/v4/checkout/sessions';
 
         $response = $this->request('POST', $endpoint, $params);
 
@@ -84,12 +84,55 @@ class OP_API_Client {
     }
 
     /**
+     * Get customer wallet balances (Part 5)
+     *
+     * @param string $customer_id Orangepill customer ID
+     * @return array|WP_Error Wallet list or error
+     */
+    public function get_customer_wallets($customer_id) {
+        return $this->request('GET', '/v4/customers/' . rawurlencode($customer_id) . '/wallets');
+    }
+
+    /**
+     * Get customer incentives / rewards history (Part 6)
+     *
+     * @param string $customer_id Orangepill customer ID
+     * @param array  $params      Optional query params (page, per_page)
+     * @return array|WP_Error Incentives list or error
+     */
+    public function get_customer_incentives($customer_id, $params = array()) {
+        $endpoint = '/v4/customers/' . rawurlencode($customer_id) . '/incentives';
+        if (!empty($params)) {
+            $endpoint .= '?' . http_build_query($params);
+        }
+        return $this->request('GET', $endpoint);
+    }
+
+    /**
+     * Apply wallet balance to a checkout session (Part 4)
+     *
+     * @param string $session_id    Checkout session ID
+     * @param string $wallet_id     Wallet ID to apply from
+     * @param string $amount        Amount to apply (string for precision)
+     * @return array|WP_Error Result or error
+     */
+    public function apply_wallet_to_session($session_id, $wallet_id, $amount) {
+        return $this->request('POST', '/v4/checkout/sessions/' . rawurlencode($session_id) . '/apply-wallet', array(
+            'wallet_id' => $wallet_id,
+            'amount'    => $amount,
+        ));
+    }
+
+    /**
      * Validate integration
+     *
+     * Calls the commerce integrations validate endpoint (not payments)
+     * since WooCommerce integrations are in commerce.provider_integrations table.
      *
      * @return array|WP_Error Validation result or error
      */
     public function validate_integration() {
-        $endpoint = '/v4/payments/integrations/' . $this->integration_id . '/validate';
+        $endpoint = '/v4/commerce/integrations/' . $this->integration_id . '/validate';
 
         $response = $this->request('POST', $endpoint, array());
 
@@ -138,7 +181,10 @@ class OP_API_Client {
             'timeout' => 30,
         );
 
-        if (!empty($data)) {
+        // Always send JSON body for POST/PUT/PATCH requests (even if empty)
+        if (in_array($method, array('POST', 'PUT', 'PATCH'), true)) {
+            $args['body'] = wp_json_encode($data);
+        } elseif (!empty($data)) {
             $args['body'] = wp_json_encode($data);
         }
 

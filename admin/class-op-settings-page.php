@@ -159,6 +159,24 @@ class OP_Settings_Page {
 
                     <tr>
                         <th scope="row">
+                            <label for="checkout_ui_url"><?php esc_html_e('Checkout UI URL', 'orangepill-wc'); ?></label>
+                        </th>
+                        <td>
+                            <input
+                                type="text"
+                                name="checkout_ui_url"
+                                id="checkout_ui_url"
+                                value="<?php echo esc_attr($settings['checkout_ui_url'] ?? 'https://checkout.orangepill.cloud'); ?>"
+                                class="regular-text"
+                            />
+                            <p class="description">
+                                <?php esc_html_e('Base URL of the Orangepill hosted checkout UI (leave default for production)', 'orangepill-wc'); ?>
+                            </p>
+                        </td>
+                    </tr>
+
+                    <tr>
+                        <th scope="row">
                             <?php esc_html_e('Webhook URL', 'orangepill-wc'); ?>
                         </th>
                         <td>
@@ -239,11 +257,12 @@ class OP_Settings_Page {
         $gateway = new OP_Payment_Gateway();
 
         $settings = array(
-            'api_key' => sanitize_text_field($_POST['api_key'] ?? ''),
-            'api_base_url' => esc_url_raw($_POST['api_base_url'] ?? 'https://api.orangepill.dev'),
-            'integration_id' => sanitize_text_field($_POST['integration_id'] ?? ''),
-            'merchant_id' => sanitize_text_field($_POST['merchant_id'] ?? ''),
-            'webhook_secret' => sanitize_text_field($_POST['webhook_secret'] ?? ''),
+            'api_key'          => sanitize_text_field($_POST['api_key'] ?? ''),
+            'api_base_url'     => esc_url_raw($_POST['api_base_url'] ?? 'https://console.orangepill.cloud'),
+            'integration_id'   => sanitize_text_field($_POST['integration_id'] ?? ''),
+            'merchant_id'      => sanitize_text_field($_POST['merchant_id'] ?? ''),
+            'webhook_secret'   => sanitize_text_field($_POST['webhook_secret'] ?? ''),
+            'checkout_ui_url'  => esc_url_raw($_POST['checkout_ui_url'] ?? 'https://checkout.orangepill.cloud'),
         );
 
         update_option('woocommerce_orangepill_settings', array_merge($gateway->settings, $settings));

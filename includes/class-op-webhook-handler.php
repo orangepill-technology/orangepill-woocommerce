@@ -135,6 +135,16 @@ class OP_Webhook_Handler {
         }
 
         switch ($event_type) {
+            // PR-OP-WOO-INTEGRATION-CORE-1 Part 7: checkout session events
+            case 'checkout.session.succeeded':
+                $this->handle_checkout_session_succeeded($event_data, $payload_hash);
+                break;
+
+            case 'checkout.session.failed':
+                $this->handle_checkout_session_failed($event_data, $payload_hash);
+                break;
+
+            // Legacy payment events (kept for backward compatibility)
             case 'payment.succeeded':
                 $this->handle_payment_succeeded($event_data, $payload_hash);
                 break;
@@ -151,6 +161,185 @@ class OP_Webhook_Handler {
                 );
                 break;
         }
+    }
+
+    /**
+     * Handle checkout.session.succeeded event (Part 7)
+     *
+     * Fired when a checkout session completes successfully. Transitions the
+     * WC order to "processing" and stores the payment reference.
+     *
+     * @param array  $data         Event data (session object)
+     * @param string $payload_hash SHA256 hash of raw payload for idempotency
+     */
+    private function handle_checkout_session_succeeded($data, $payload_hash) {
+        $session_id = $data['id'] ?? ($data['session_id'] ?? null);
+        $payment_id = $data['payment_id'] ?? null;
+        $event_id   = $data['event_id'] ?? null;
+
+        if (empty($session_id)) {
+            OP_Logger::warning(
+                'webhook_missing_session_id',
+                'checkout.session.succeeded event missing session id'
+            );
+            return;
+        }
+
+        $order = $this->find_order_by_session_id($session_id);
+
+        if (!$order) {
+            OP_Logger::warning(
+                'webhook_order_not_found',
+                'Order not found for session_id: ' . $session_id,
+                array('session_id' => $session_id)
+            );
+            return;
+        }
+
+        OP_Sync_Journal::record_inbound_received('checkout.session.succeeded', $order->get_id(), $data);
+
+        // Idempotency guard
+        if (!empty($event_id)) {
+            $check = $this->is_event_processed($order, $event_id, $payload_hash);
+            if ($check === true) {
+                OP_Logger::info(
+                    'webhook_duplicate_event',
+                    'Duplicate checkout.session.succeeded ignored',
+                    array('order_id' => $order->get_id(), 'event_id' => $event_id)
+                );
+                return;
+            } elseif ($check === 'hash_mismatch') {
+                OP_Logger::error(
+                    'webhook_event_id_reuse',
+                    'Event ID reuse with different payload detected',
+                    array('order_id' => $order->get_id(), 'event_id' => $event_id)
+                );
+                return;
+            }
+        }
+
+        // Protect terminal states — don't downgrade a completed order
+        $current_status = $order->get_status();
+        if (in_array($current_status, array('completed', 'refunded'), true)) {
+            OP_Logger::info(
+                'webhook_terminal_state_protected',
+                'Order already in terminal state, skipping checkout.session.succeeded',
+                array('order_id' => $order->get_id(), 'status' => $current_status)
+            );
+            return;
+        }
+
+        $order->update_status('processing', __('Payment confirmed by Orangepill', 'orangepill-wc'));
+
+        if (!empty($payment_id)) {
+            $order->update_meta_data('_orangepill_payment_id', $payment_id);
+        }
+        $order->update_meta_data('_orangepill_payment_status', 'succeeded');
+        $order->update_meta_data('_orangepill_payment_confirmed_at', current_time('mysql'));
+
+        if (!empty($event_id)) {
+            $this->mark_event_processed($order, $event_id, $payload_hash);
+        }
+        $order->save();
+
+        OP_Logger::info(
+            'checkout_session_succeeded',
+            'Payment confirmed via checkout.session.succeeded for order #' . $order->get_id(),
+            array(
+                'order_id'   => $order->get_id(),
+                'session_id' => $session_id,
+                'payment_id' => $payment_id,
+                'event_id'   => $event_id,
+            )
+        );
+    }
+
+    /**
+     * Handle checkout.session.failed event (Part 7)
+     *
+     * @param array  $data         Event data (session object)
+     * @param string $payload_hash SHA256 hash of raw payload for idempotency
+     */
+    private function handle_checkout_session_failed($data, $payload_hash) {
+        $session_id     = $data['id'] ?? ($data['session_id'] ?? null);
+        $event_id       = $data['event_id'] ?? null;
+        $failure_reason = $data['failure_reason'] ?? ($data['cancellation_reason'] ?? 'Unknown reason');
+
+        if (empty($session_id)) {
+            OP_Logger::warning(
+                'webhook_missing_session_id',
+                'checkout.session.failed event missing session id'
+            );
+            return;
+        }
+
+        $order = $this->find_order_by_session_id($session_id);
+
+        if (!$order) {
+            OP_Logger::warning(
+                'webhook_order_not_found',
+                'Order not found for session_id: ' . $session_id,
+                array('session_id' => $session_id)
+            );
+            return;
+        }
+
+        OP_Sync_Journal::record_inbound_received('checkout.session.failed', $order->get_id(), $data);
+
+        if (!empty($event_id)) {
+            $check = $this->is_event_processed($order, $event_id, $payload_hash);
+            if ($check === true) {
+                OP_Logger::info(
+                    'webhook_duplicate_event',
+                    'Duplicate checkout.session.failed ignored',
+                    array('order_id' => $order->get_id(), 'event_id' => $event_id)
+                );
+                return;
+            } elseif ($check === 'hash_mismatch') {
+                OP_Logger::error(
+                    'webhook_event_id_reuse',
+                    'Event ID reuse with different payload detected',
+                    array('order_id' => $order->get_id(), 'event_id' => $event_id)
+                );
+                return;
+            }
+        }
+
+        // Protect terminal states
+        $current_status = $order->get_status();
+        if (in_array($current_status, array('completed', 'processing', 'refunded'), true)) {
+            OP_Logger::info(
+                'webhook_terminal_state_protected',
+                'Order already in terminal state, skipping checkout.session.failed',
+                array('order_id' => $order->get_id(), 'status' => $current_status)
+            );
+            return;
+        }
+
+        $order->update_status('failed', sprintf(
+            __('Payment session failed: %s', 'orangepill-wc'),
+            $failure_reason
+        ));
+
+        $order->update_meta_data('_orangepill_payment_status', 'failed');
+        $order->update_meta_data('_orangepill_failure_reason', $failure_reason);
+        $order->update_meta_data('_orangepill_payment_failed_at', current_time('mysql'));
+
+        if (!empty($event_id)) {
+            $this->mark_event_processed($order, $event_id, $payload_hash);
+        }
+        $order->save();
+
+        OP_Logger::error(
+            'checkout_session_failed',
+            'Checkout session failed for order #' . $order->get_id() . ': ' . $failure_reason,
+            array(
+                'order_id'       => $order->get_id(),
+                'session_id'     => $session_id,
+                'event_id'       => $event_id,
+                'failure_reason' => $failure_reason,
+            )
+        );
     }
 
     /**

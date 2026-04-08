@@ -94,9 +94,10 @@ function orangepill_wc_init() {
     // Initialize payment gateway
     add_filter('woocommerce_payment_gateways', 'orangepill_wc_add_gateway');
 
-    // Initialize admin menu
+    // Initialize admin menu and settings (AJAX handlers need to be registered globally)
     if (is_admin()) {
         $admin_menu = new OP_Admin_Menu();
+        $settings_page = new OP_Settings_Page();
     }
 
     // Initialize webhook handler (WooCommerce native routing)
@@ -109,8 +110,15 @@ function orangepill_wc_init() {
     $refund_sync = new OP_Refund_Sync();
     $refund_sync->init();
 
+    // [PR-OP-WOO-INTEGRATION-CORE-1] My Account loyalty + rewards pages
+    $my_account = new OP_My_Account();
+    $my_account->init();
+
     // Enqueue admin assets
     add_action('admin_enqueue_scripts', 'orangepill_wc_enqueue_admin_assets');
+
+    // Enqueue frontend checkout assets
+    add_action('wp_enqueue_scripts', 'orangepill_wc_enqueue_checkout_assets');
 
     // PR-WC-3b: Replay admin action handler
     add_action('admin_post_orangepill_replay_event', 'orangepill_wc_replay_event');
@@ -180,6 +188,33 @@ function orangepill_wc_enqueue_admin_assets($hook) {
         'ajax_url' => admin_url('admin-ajax.php'),
         'admin_post_url' => admin_url('admin-post.php'),
         'nonce' => wp_create_nonce('orangepill_wc_admin'),
+    ));
+}
+
+/**
+ * Enqueue frontend checkout assets (wallet widget)
+ *
+ * PR-OP-WOO-INTEGRATION-CORE-1 Part 4
+ */
+function orangepill_wc_enqueue_checkout_assets() {
+    if (!is_checkout()) {
+        return;
+    }
+
+    wp_enqueue_script(
+        'orangepill-wc-checkout',
+        ORANGEPILL_WC_PLUGIN_URL . 'assets/js/checkout.js',
+        array('jquery'),
+        ORANGEPILL_WC_VERSION,
+        true
+    );
+
+    wp_localize_script('orangepill-wc-checkout', 'orangepillCheckout', array(
+        'ajax_url' => admin_url('admin-ajax.php'),
+        'nonce'    => wp_create_nonce('orangepill_wc_checkout'),
+        'i18n'     => array(
+            'apply_balance' => __('Apply {amount} {currency} loyalty balance to this order', 'orangepill-wc'),
+        ),
     ));
 }
 
@@ -296,7 +331,11 @@ function orangepill_wc_activate() {
         update_option('orangepill_wc_db_version', 2);
     }
 
-    // Flush rewrite rules for webhook endpoint
+    // Register My Account endpoints before flushing rewrite rules
+    add_rewrite_endpoint(OP_My_Account::ENDPOINT_LOYALTY, EP_ROOT | EP_PAGES);
+    add_rewrite_endpoint(OP_My_Account::ENDPOINT_REWARDS, EP_ROOT | EP_PAGES);
+
+    // Flush rewrite rules (webhook endpoint + My Account endpoints)
     flush_rewrite_rules();
 }
 register_activation_hook(__FILE__, 'orangepill_wc_activate');
