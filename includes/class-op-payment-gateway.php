@@ -101,6 +101,14 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
                 'default'     => 'https://checkout.orangepill.cloud',
                 'desc_tip'    => true,
             ),
+            'webhook_public_url' => array(
+                'title'       => __('Public Webhook URL', 'orangepill-wc'),
+                'type'        => 'text',
+                'description' => __('Override the webhook callback URL sent to Orangepill. Required for local dev behind ngrok. Leave empty to use the auto-generated WooCommerce API URL.', 'orangepill-wc'),
+                'default'     => '',
+                'placeholder' => WC()->api_request_url('orangepill-webhook'),
+                'desc_tip'    => false,
+            ),
         );
     }
 
@@ -189,8 +197,12 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
                 'success_url'     => $this->get_return_url($order),
                 'cancel_url'      => wc_get_checkout_url(),
                 'metadata'        => array(
-                    'channel'      => 'web',          // Part 2: channel in session metadata
+                    'channel'      => 'web',
                     'woo_order_id' => (string) $order_id,
+                ),
+                'callback'        => array(
+                    'url'    => $this->get_webhook_callback_url(),
+                    'events' => array('checkout.session.completed', 'checkout.session.failed'),
                 ),
             );
 
@@ -332,6 +344,23 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
             wc_add_notice(__('Payment processing failed. Please try again.', 'orangepill-wc'), 'error');
             return array('result' => 'failure');
         }
+    }
+
+    /**
+     * Get the webhook callback URL to pass in checkout session creation.
+     *
+     * Uses the "Public Webhook URL" setting when set (required for local dev
+     * behind ngrok). Falls back to the auto-generated WooCommerce API URL
+     * for production where the store has a real public hostname.
+     *
+     * @return string Fully-qualified webhook URL
+     */
+    private function get_webhook_callback_url() {
+        $override = trim($this->get_option('webhook_public_url', ''));
+        if (!empty($override)) {
+            return rtrim($override, '/');
+        }
+        return WC()->api_request_url('orangepill-webhook');
     }
 
     /**
