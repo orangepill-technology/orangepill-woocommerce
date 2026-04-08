@@ -85,12 +85,16 @@ class OP_Customer_Sync {
         ));
 
         if (is_wp_error($result)) {
-            // On "already exists" conflict, fetch the customer by external_id instead
-            $error_data = $result->get_error_data();
-            $status     = $error_data['status_code'] ?? 0;
-            $message    = $result->get_error_message();
+            // On "already exists" conflict, fetch the customer by external_id instead.
+            // The API client wraps the raw body in error_data['response'], so check there.
+            $error_data   = $result->get_error_data();
+            $status       = $error_data['status_code'] ?? 0;
+            $raw_response = $error_data['response'] ?? array();
+            $raw_error    = is_array($raw_response) ? ($raw_response['error'] ?? '') : '';
 
-            if ($status === 400 && stripos($message, 'already exists') !== false) {
+            // On any 400, attempt to fetch by external_id (covers "already exists"
+            // and any other conflict the API might return as 400)
+            if ($status === 400) {
                 OP_Sync_Journal::mark_sent($event_id, array('note' => 'conflict_fetch_fallback'));
                 return $this->fetch_by_external_id($user_id, $api);
             }
