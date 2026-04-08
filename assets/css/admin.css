@@ -239,6 +239,45 @@
     visibility: visible;
 }
 
+/* ─── Checkout Rewards Wallet Widget ──────────────────────────────────── */
+.op-wallet-widget {
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    padding: 12px 16px;
+    background: #fafafa;
+    margin-top: 12px;
+}
+
+.op-wallet-label {
+    margin: 0 0 8px 0;
+    font-size: 14px;
+    color: #333;
+}
+
+.op-wallet-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    font-size: 14px;
+}
+
+.op-wallet-loading {
+    color: #888;
+    font-size: 13px;
+    font-style: italic;
+}
+
+.op-wallet-preview {
+    margin: 8px 0 2px 0;
+    font-size: 13px;
+    color: #333;
+    padding: 6px 10px;
+    background: #f0f7f0;
+    border-left: 3px solid #00a32a;
+    border-radius: 0 3px 3px 0;
+}
+
 /* ─── My Account Dashboard Widget ─────────────────────────────────────── */
 .orangepill-dashboard-widget {
     background: #fff8f0;

@@ -204,16 +204,49 @@ Displays for Orangepill orders:
 - Per-event replay buttons for failures
 - Refund count and failed count
 
-## Checkout Flow
+## Checkout Flow (PR-OP-WOO-INTEGRATION-CORE-1 + PR-WC-CHECKOUT-WALLET-UX-1)
+
+**Architecture principle: Woo is UI-only. Orangepill is source of truth.**
+WooCommerce renders UI and relays intent. All balance/eligibility decisions happen on the Orangepill side.
 
 1. Customer selects "Orangepill" as payment method
-2. Plugin syncs customer to Orangepill (creates or retrieves customer_id)
-3. Plugin creates checkout session with order metadata
-4. Customer is redirected to Orangepill hosted checkout
-5. Customer completes payment
-6. Orangepill sends webhook to WooCommerce
-7. Plugin verifies signature and updates order status
-8. Order marked as "Processing" and customer is notified
+2. Plugin syncs customer to Orangepill (`POST /v4/customers`, deduplicated via `external_id: woo:{user_id}`)
+3. Plugin creates checkout session (`POST /v4/checkout/sessions`) with `callback.url` for event delivery
+4. **[Optional]** If customer opted into rewards: `POST /v4/checkout/sessions/:id/apply-wallet` (non-fatal on failure)
+5. Customer is redirected to Orangepill hosted checkout UI (`#cs=<client_secret>` in URL fragment)
+6. Customer completes payment via Orangepill
+7. Orangepill POSTs `checkout.session.completed` to `callback.url`
+8. Plugin verifies HMAC signature, calls `$order->payment_complete()`
+
+**Webhook is the ONLY source of truth for order finalization. Redirect is UX-only.**
+
+### Rewards Wallet Widget (PR-WC-CHECKOUT-WALLET-UX-1 Part 1)
+
+For logged-in customers with a spendable rewards balance, the checkout page shows:
+
+```
+Rewards balance available: 1,500 COP
+[ ] Apply rewards balance to this purchase
+```
+
+- Balance fetched via AJAX from `/v4/customers/:id/wallets` (5-min server-side cache)
+- Woo never computes balances or max applicable amounts — value shown verbatim from API
+- Wallet ID passed via hidden field so server skips a second API call
+- Widget failure is silent — checkout always remains functional
+
+### Checkout Session Callback
+
+Every session creation includes:
+```json
+{
+  "callback": {
+    "url": "https://your-store.com/?wc-api=orangepill-webhook",
+    "events": ["checkout.session.completed", "checkout.session.failed"]
+  }
+}
+```
+
+Configure **WooCommerce → Settings → Payments → Orangepill → Public Webhook URL** for local dev (ngrok) or proxy environments.
 
 ## Webhook Events
 
@@ -574,6 +607,19 @@ For issues or questions:
 - Contact Orangepill support with session_id or payment_id
 
 ## Changelog
+
+### 1.2.0 (PR-OP-WOO-INTEGRATION-CORE-1 + PR-WC-CHECKOUT-WALLET-UX-1)
+
+- **Customer Mapping**: `get_or_create()` syncs WC user → Orangepill customer; conflict-safe (fetch by `external_id` on 400)
+- **Channel Propagation**: `_orangepill_channel = 'web'` on order meta + session metadata
+- **Checkout Session**: `POST /v4/checkout/sessions` with `callback` block for webhook delivery
+- **Rewards Wallet Widget**: Shows spendable balance on checkout; opt-in checkbox; `apply-wallet` called after session creation (non-fatal)
+- **My Account — Rewards Balance**: Read-only view of `GET /v4/customers/:id/wallets`
+- **My Account — Rewards History**: Paginated read-only view of `GET /v4/customers/:id/incentives`
+- **My Account — Dashboard Widget**: Compact balance widget when spendable > 0
+- **Webhook**: `checkout.session.completed` / `checkout.session.failed` handlers; `payment_complete()` as sole state mutator
+- **Admin — Mark as Paid**: Manual reconciliation button for pending/on-hold orders
+- **Public Webhook URL setting**: For ngrok / proxy environments
 
 ### 1.1.0 (PR-WC-LOYALTY-1)
 - **Loyalty Integration**:

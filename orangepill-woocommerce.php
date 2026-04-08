@@ -260,10 +260,15 @@ function orangepill_wc_enqueue_checkout_assets() {
     );
 
     wp_localize_script('orangepill-wc-checkout', 'orangepillCheckout', array(
-        'ajax_url' => admin_url('admin-ajax.php'),
-        'nonce'    => wp_create_nonce('orangepill_wc_checkout'),
-        'i18n'     => array(
-            'apply_balance' => __('Apply {amount} {currency} loyalty balance to this order', 'orangepill-wc'),
+        'ajax_url'    => admin_url('admin-ajax.php'),
+        'nonce'       => wp_create_nonce('orangepill_wc_checkout'),
+        'cart_total'  => (string) WC()->cart->get_total('edit'),
+        'currency'    => get_woocommerce_currency(),
+        'i18n'        => array(
+            'available_label' => __('Rewards balance available:', 'orangepill-wc'),
+            'apply_label'     => __('Apply rewards balance to this purchase', 'orangepill-wc'),
+            'applying_label'  => __('Applying:', 'orangepill-wc'),
+            'remaining_label' => __('Estimated remaining to pay:', 'orangepill-wc'),
         ),
     ));
 }

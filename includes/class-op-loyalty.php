@@ -122,9 +122,16 @@ class OP_Loyalty {
 
         $api = new OP_API_Client();
 
-        // If no wallet_id provided, fall back to the customer's spendable wallet
+        // Validate wallet_id from hidden field against live wallet list.
+        // Never trust it blindly — it can be stale (cached result, multi-wallet
+        // future, or tampered form field). Fall back to API fetch if invalid.
+        if (!empty($wallet_id)) {
+            $wallet_id = $this->validate_wallet_id($wallet_id);
+        }
+
         if (empty($wallet_id)) {
-            $wallet = $this->get_spendable_wallet_for_current_user();
+            // Fallback: fetch primary spendable wallet fresh from API
+            $wallet    = $this->get_spendable_wallet_for_current_user();
             $wallet_id = $wallet['id'] ?? '';
         }
 
@@ -133,6 +140,29 @@ class OP_Loyalty {
         }
 
         return $api->apply_wallet_to_session($session_id, $wallet_id, $amount);
+    }
+
+    /**
+     * Validate that a wallet_id belongs to the current user's wallets.
+     *
+     * Compares against the cached (or freshly fetched) wallet list.
+     * Returns the wallet_id if valid, empty string if not found.
+     *
+     * @param string $wallet_id Wallet ID from hidden form field
+     * @return string Validated wallet_id or ''
+     */
+    private function validate_wallet_id($wallet_id) {
+        $wallet  = $this->get_spendable_wallet_for_current_user();
+        if ($wallet && ($wallet['id'] ?? '') === $wallet_id) {
+            return $wallet_id;
+        }
+        // Not found in wallet list — could be stale; force API fallback
+        OP_Logger::info(
+            'wallet_id_stale',
+            'wallet_id from form not found in customer wallets — falling back to API fetch',
+            array('wallet_id' => $wallet_id)
+        );
+        return '';
     }
 
     /**

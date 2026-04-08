@@ -113,25 +113,27 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
     }
 
     /**
-     * Render loyalty wallet widget on checkout page (Part 4)
+     * Render rewards wallet widget on checkout page (Part 1 — PR-WC-CHECKOUT-WALLET-UX-1)
      *
-     * Shows available loyalty balance and lets the customer opt in before
-     * the form is submitted. The selection is passed as a hidden field so
-     * process_payment() can apply it to the session.
+     * Outputs the widget container populated by checkout.js via AJAX. Three hidden
+     * fields carry the customer's opt-in decision into process_payment():
+     *   orangepill_apply_wallet  — "1" if customer checked the box
+     *   orangepill_wallet_amount — full spendable balance (verbatim from API, never computed here)
+     *   orangepill_wallet_id     — wallet ID so server skips a second API call
      */
     public function payment_fields() {
-        // Standard description
         if ($this->description) {
             echo wp_kses_post(wpautop(wptexturize($this->description)));
         }
 
-        // Wallet widget — only for logged-in users; populated via JS
         if (is_user_logged_in()) {
             echo '<div id="orangepill-wallet-widget" style="margin-top:12px;" data-loading="1">';
-            echo '<span class="op-wallet-loading">' . esc_html__('Checking loyalty balance...', 'orangepill-wc') . '</span>';
+            echo '<span class="op-wallet-loading">' . esc_html__('Checking rewards balance\xe2\x80\xa6', 'orangepill-wc') . '</span>';
             echo '</div>';
-            echo '<input type="hidden" name="orangepill_apply_wallet" id="orangepill_apply_wallet" value="0" />';
+            // Values written by checkout.js; read by process_payment()
+            echo '<input type="hidden" name="orangepill_apply_wallet"  id="orangepill_apply_wallet"  value="0" />';
             echo '<input type="hidden" name="orangepill_wallet_amount" id="orangepill_wallet_amount" value="" />';
+            echo '<input type="hidden" name="orangepill_wallet_id"     id="orangepill_wallet_id"     value="" />';
         }
     }
 
@@ -274,10 +276,12 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
             // before redirecting. A failure here is non-fatal — we log and continue.
             $apply_wallet  = isset($_POST['orangepill_apply_wallet']) && $_POST['orangepill_apply_wallet'] === '1';
             $wallet_amount = isset($_POST['orangepill_wallet_amount']) ? sanitize_text_field($_POST['orangepill_wallet_amount']) : '';
+            $wallet_id     = isset($_POST['orangepill_wallet_id'])     ? sanitize_text_field($_POST['orangepill_wallet_id'])     : '';
 
             if ($apply_wallet && $customer_id && !empty($wallet_amount)) {
                 $loyalty = new OP_Loyalty();
-                $apply_result = $loyalty->apply_wallet_to_session($session_id, $wallet_amount);
+                // Pass wallet_id from hidden field — avoids a second API call server-side
+                $apply_result = $loyalty->apply_wallet_to_session($session_id, $wallet_amount, $wallet_id);
 
                 if (is_wp_error($apply_result)) {
                     OP_Logger::warning(
@@ -296,11 +300,34 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
                         'wallet_applied',
                         'Wallet balance applied to session',
                         array(
-                            'order_id'   => $order_id,
-                            'session_id' => $session_id,
-                            'amount'     => $wallet_amount,
+                            'order_id'        => $order_id,
+                            'session_id'      => $session_id,
+                            'amount'          => $wallet_amount,
+                            'payable_amount'  => $apply_result['remaining_amount'] ?? 'unknown',
                         )
                     );
+
+                    // Zero-payable guard: if wallet covers 100% of the order,
+                    // the backend completes the session internally — no hosted
+                    // checkout UI needed. Skip the redirect and finalise locally.
+                    $payable = (float) ($apply_result['remaining_amount'] ?? $apply_result['payable_amount'] ?? -1);
+                    if ($payable === 0.0) {
+                        $order->update_meta_data('_orangepill_payment_status', 'succeeded');
+                        $order->update_meta_data('_orangepill_payment_confirmed_at', current_time('mysql'));
+                        $order->save();
+                        $order->payment_complete();
+
+                        OP_Logger::info(
+                            'wallet_full_cover',
+                            'Order fully covered by wallet — skipping hosted checkout redirect',
+                            array('order_id' => $order_id, 'session_id' => $session_id)
+                        );
+
+                        return array(
+                            'result'   => 'success',
+                            'redirect' => $this->get_return_url($order),
+                        );
+                    }
                 }
             }
 
