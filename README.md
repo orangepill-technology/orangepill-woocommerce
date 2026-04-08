@@ -11,7 +11,8 @@ This plugin integrates Orangepill's embedded finance platform into your WooComme
 ### Payment Processing
 - **Seamless Checkout**: Redirect customers to Orangepill's hosted checkout for a secure payment experience
 - **Customer Sync**: Automatic customer deduplication via external IDs
-- **Webhook Support**: Real-time payment confirmations via webhook callbacks
+- **Integration Webhook**: Automatically registers a single integration-level webhook on settings save — no manual dashboard configuration required
+- **Webhook Fallback**: Session-level callback included as fallback when integration webhook is not yet registered
 
 ### Loyalty Integration (PR-WC-LOYALTY-1)
 - **Loyalty Earn Triggers**: Automatic `order.finalized` events when orders are completed
@@ -108,9 +109,18 @@ wp eval-file wp-content/plugins/orangepill-woocommerce/verify-db-schema.php
 
 ### Webhook Setup
 
-1. Copy the webhook URL from the settings page: `https://yoursite.com/wc-api/orangepill-webhook`
-2. Configure this URL in your Orangepill dashboard
-3. Webhooks are secured with HMAC-SHA256 signature verification
+Webhook registration is **automatic** — the plugin registers an integration-level webhook with Orangepill when you save settings. No manual dashboard configuration is required.
+
+**Status**: The Settings page shows a **Webhook Registration** status panel (Registered ✅ / Failed ⚠️ / Not registered). Use the **Retry Registration** button if registration fails.
+
+**Webhook URL** (read-only, shown in settings):
+```
+https://yoursite.com/?wc-api=orangepill-webhook
+```
+
+**Manual fallback**: If you need a public URL different from your WordPress home URL (e.g. ngrok for local dev), the plugin falls back to session-level callback registration automatically when the integration webhook is not confirmed.
+
+Webhooks are secured with HMAC-SHA256 signature verification.
 
 **Webhook Signature Spec:**
 - Header: `X-Orangepill-Signature`
@@ -148,8 +158,9 @@ Displays:
 
 - Configure API credentials
 - Test connection with validation endpoint
-- View webhook URL
-- Connection status indicator
+- View webhook URL (read-only)
+- **Connection Status** panel — live test result with last-tested timestamp
+- **Webhook Registration** panel — shows Registered ✅ / Failed ⚠️ / Not registered; **Retry Registration** button for manual re-registration
 
 ### Sync Log
 **Location**: WooCommerce → Orangepill Sync Log
@@ -211,14 +222,18 @@ WooCommerce renders UI and relays intent. All balance/eligibility decisions happ
 
 1. Customer selects "Orangepill" as payment method
 2. Plugin syncs customer to Orangepill (`POST /v4/customers`, deduplicated via `external_id: woo:{user_id}`)
-3. Plugin creates checkout session (`POST /v4/checkout/sessions`) with `callback.url` for event delivery
+3. Plugin creates checkout session (`POST /v4/checkout/sessions`); session-level `callback` only included as fallback if integration-level webhook not registered
 4. **[Optional]** If customer opted into rewards: `POST /v4/checkout/sessions/:id/apply-wallet` (non-fatal on failure)
 5. Customer is redirected to Orangepill hosted checkout UI (`#cs=<client_secret>` in URL fragment)
 6. Customer completes payment via Orangepill
-7. Orangepill POSTs `checkout.session.completed` to `callback.url`
+7. Orangepill delivers `checkout.session.completed` via integration-level webhook (primary) or session callback (fallback)
 8. Plugin verifies HMAC signature, calls `$order->payment_complete()`
 
 **Webhook is the ONLY source of truth for order finalization. Redirect is UX-only.**
+
+**Webhook delivery path** (logged as `checkout_session_webhook_path` on every session creation):
+- `integration_webhook` — primary path, integration webhook registered
+- `session_callback_fallback` — fallback, integration webhook not yet confirmed
 
 ### Rewards Wallet Widget (PR-WC-CHECKOUT-WALLET-UX-1 Part 1)
 
@@ -234,35 +249,36 @@ Rewards balance available: 1,500 COP
 - Wallet ID passed via hidden field so server skips a second API call
 - Widget failure is silent — checkout always remains functional
 
-### Checkout Session Callback
-
-Every session creation includes:
-```json
-{
-  "callback": {
-    "url": "https://your-store.com/?wc-api=orangepill-webhook",
-    "events": ["checkout.session.completed", "checkout.session.failed"]
-  }
-}
-```
-
-Configure **WooCommerce → Settings → Payments → Orangepill → Public Webhook URL** for local dev (ngrok) or proxy environments.
-
 ## Webhook Events
 
-### payment.succeeded
+### checkout.session.completed / checkout.session.succeeded
+
+Both event names handled identically — integration-level webhook emits `completed`, session callback emits `succeeded`.
 - Verifies HMAC signature (timing-safe)
 - Checks idempotency (event_id tracking)
 - Updates order status to "Processing"
 - Stores payment_id and event_id in order metadata
-- Logs successful payment event
+- Logs `checkout_session_succeeded`
 
-### payment.failed
+### checkout.session.failed
+
 - Verifies HMAC signature (timing-safe)
 - Checks idempotency (event_id tracking)
 - Updates order status to "Failed"
-- Stores failure reason and event_id in order metadata
-- Logs payment failure
+- Terminal-state protected: `processing`, `completed`, `refunded` orders are not changed
+- Logs `checkout_session_failed`
+
+### checkout.session.expired
+
+- Verifies HMAC signature (timing-safe)
+- Checks idempotency (event_id tracking)
+- Transitions `pending` / `on-hold` / `failed` orders → `cancelled`
+- Terminal-state protected: `processing`, `completed`, `refunded`, `cancelled` orders are not changed
+- Logs `checkout_session_expired`
+
+### payment.succeeded / payment.failed (legacy)
+
+Kept for backward compatibility with older Orangepill integrations.
 
 **Idempotency Guarantees (Financial-Grade):**
 - Each event_id + payload_hash can only be processed once per order
@@ -514,14 +530,15 @@ orangepill-woocommerce/
 ├── phpunit.xml                       # PHPUnit configuration
 ├── README.md                         # This file
 ├── includes/                         # Core classes
-│   ├── class-op-api-client.php      # API HTTP client
-│   ├── class-op-payment-gateway.php # WC_Payment_Gateway
-│   ├── class-op-webhook-handler.php # Webhook processor
-│   ├── class-op-order-sync.php      # Order sync + order.finalized
-│   ├── class-op-refund-sync.php     # Refund sync + order.refunded (NEW)
-│   ├── class-op-customer-sync.php   # Customer sync
-│   ├── class-op-sync-journal.php    # Durable event journal (NEW)
-│   └── class-op-logger.php          # Logging system
+│   ├── class-op-api-client.php          # API HTTP client
+│   ├── class-op-payment-gateway.php     # WC_Payment_Gateway
+│   ├── class-op-webhook-handler.php     # Webhook processor
+│   ├── class-op-integration-webhooks.php# Integration webhook registration
+│   ├── class-op-order-sync.php          # Order sync + order.finalized
+│   ├── class-op-refund-sync.php         # Refund sync + order.refunded
+│   ├── class-op-customer-sync.php       # Customer sync
+│   ├── class-op-sync-journal.php        # Durable event journal
+│   └── class-op-logger.php              # Logging system
 ├── admin/                            # Admin UI
 │   ├── class-op-admin-menu.php      # Menu registration
 │   ├── class-op-settings-page.php   # Settings + test
@@ -550,10 +567,11 @@ orangepill-woocommerce/
 4. Check sync log for detailed error messages
 
 ### Webhooks Not Working
-1. Verify webhook URL is configured in Orangepill dashboard
-2. Check webhook secret matches exactly
-3. Review sync log for signature verification failures
-4. Ensure site is accessible from internet (not localhost)
+1. Check Settings page → **Webhook Registration** panel — if status is Failed, click **Retry Registration**
+2. Re-save settings to trigger automatic re-registration
+3. Check webhook secret matches exactly
+4. Review sync log for `integration_webhook_register_failed` or signature verification failures
+5. Check `checkout_session_webhook_path` log entries to confirm which delivery path is active
 
 ### Orders Stuck in Pending
 1. Check if webhook is configured correctly
@@ -607,6 +625,16 @@ For issues or questions:
 - Contact Orangepill support with session_id or payment_id
 
 ## Changelog
+
+### 1.3.0 (PR-WC-INTEGRATION-WEBHOOKS-1)
+
+- **Integration Webhook Registration**: `OP_Integration_Webhooks` class registers/updates a single webhook on settings save; idempotent (list → URL match → update or create)
+- **Canonical URL Helper**: `orangepill_wc_get_webhook_url()` — single source of truth for webhook URL across all files
+- **API Client**: Added `register/list/update/delete_integration_webhook()` methods for `/v4/commerce/integrations/{id}/webhooks`
+- **Settings UI**: Webhook Registration status panel (Registered ✅ / Failed ⚠️ / Not registered) + Retry Registration button with live AJAX update
+- **Webhook Handler**: Added `checkout.session.completed` alias for integration-level events; added `checkout.session.expired` handler (cancels pending/on-hold/failed orders, terminal-state protected)
+- **Session Callback Fallback**: Per-session `callback` block now included only when integration webhook is not registered; every session creation logs which path is active (`checkout_session_webhook_path`)
+- **Duplicate Detection**: Warns via `integration_webhook_duplicate_url` if multiple webhooks share the same URL; updates first deterministically
 
 ### 1.2.0 (PR-OP-WOO-INTEGRATION-CORE-1 + PR-WC-CHECKOUT-WALLET-UX-1)
 
