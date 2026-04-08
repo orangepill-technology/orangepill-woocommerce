@@ -350,6 +350,32 @@ class OP_Order_Metabox {
                     <?php esc_html_e('No Orangepill payment data available for this order.', 'orangepill-wc'); ?>
                 </p>
             <?php endif; ?>
+
+            <?php
+            // Manual "Mark as Paid" — for when webhooks can't reach the server.
+            $current_status = $order->get_status();
+            $can_mark_paid  = in_array($current_status, array('pending', 'on-hold'), true);
+            if (!empty($session_id) && $can_mark_paid):
+            ?>
+            <hr style="margin: 15px 0; border: none; border-top: 1px solid #ddd;">
+            <div class="orangepill-metabox-field">
+                <p class="description" style="margin-bottom: 8px;">
+                    <?php esc_html_e('Webhooks not received? Verify payment in Orangepill dashboard then confirm manually.', 'orangepill-wc'); ?>
+                </p>
+                <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                    <input type="hidden" name="action"   value="orangepill_mark_paid" />
+                    <input type="hidden" name="order_id" value="<?php echo esc_attr($order->get_id()); ?>" />
+                    <input type="hidden" name="nonce"    value="<?php echo esc_attr(wp_create_nonce('orangepill_wc_admin')); ?>" />
+                    <button
+                        type="submit"
+                        class="button button-primary button-small"
+                        onclick="return confirm('<?php echo esc_js(__('Mark this order as paid?\n\nOnly do this after verifying payment in the Orangepill dashboard.', 'orangepill-wc')); ?>');"
+                    >
+                        <?php esc_html_e('Mark as Paid', 'orangepill-wc'); ?>
+                    </button>
+                </form>
+            </div>
+            <?php endif; ?>
         </div>
 
         <style>

@@ -120,6 +120,14 @@ function orangepill_wc_init() {
     // Enqueue frontend checkout assets
     add_action('wp_enqueue_scripts', 'orangepill_wc_enqueue_checkout_assets');
 
+    // Move Orangepill orders from pending → on-hold when customer returns to thank-you page.
+    // Webhooks are the authoritative payment confirmation; this is a safe holding state
+    // for when webhooks can't reach the server (e.g. local dev / firewall).
+    add_action('woocommerce_thankyou', 'orangepill_wc_thankyou_hold');
+
+    // Admin: manual "Mark as Paid" action for orders stuck in pending/on-hold
+    add_action('admin_post_orangepill_mark_paid', 'orangepill_wc_mark_paid');
+
     // PR-WC-3b: Replay admin action handler
     add_action('admin_post_orangepill_replay_event', 'orangepill_wc_replay_event');
 
@@ -189,6 +197,85 @@ function orangepill_wc_enqueue_admin_assets($hook) {
         'admin_post_url' => admin_url('admin-post.php'),
         'nonce' => wp_create_nonce('orangepill_wc_admin'),
     ));
+}
+
+/**
+ * Move Orangepill orders from pending → on-hold when customer returns to thank-you page.
+ *
+ * Webhooks are the primary mechanism for payment confirmation. This hook provides
+ * a safe fallback for environments where webhooks can't reach the server (local dev).
+ * on-hold = "we sent the customer to pay, awaiting webhook confirmation".
+ *
+ * @param int $order_id WooCommerce order ID
+ */
+function orangepill_wc_thankyou_hold($order_id) {
+    $order = wc_get_order($order_id);
+
+    if (!$order || $order->get_payment_method() !== 'orangepill') {
+        return;
+    }
+
+    // Only transition from pending — don't downgrade already-confirmed orders
+    if ($order->get_status() !== 'pending') {
+        return;
+    }
+
+    $order->update_status(
+        'on-hold',
+        __('Customer returned from Orangepill checkout. Awaiting payment confirmation webhook.', 'orangepill-wc')
+    );
+
+    OP_Logger::info(
+        'order_held_pending_webhook',
+        'Order moved to on-hold — awaiting webhook confirmation',
+        array('order_id' => $order_id)
+    );
+}
+
+/**
+ * Admin: manually mark an Orangepill order as paid (processing).
+ *
+ * Safety net for when webhooks cannot reach the server. Intended for use
+ * by shop operators who have verified payment in the Orangepill dashboard.
+ */
+function orangepill_wc_mark_paid() {
+    if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'orangepill_wc_admin')) {
+        wp_die(__('Security check failed', 'orangepill-wc'));
+    }
+
+    if (!current_user_can('manage_woocommerce')) {
+        wp_die(__('Permission denied', 'orangepill-wc'));
+    }
+
+    $order_id = isset($_POST['order_id']) ? intval($_POST['order_id']) : 0;
+    if (!$order_id) {
+        wp_die(__('Invalid order ID', 'orangepill-wc'));
+    }
+
+    $order = wc_get_order($order_id);
+    if (!$order || $order->get_payment_method() !== 'orangepill') {
+        wp_die(__('Order not found or not an Orangepill order', 'orangepill-wc'));
+    }
+
+    // Protect terminal states
+    if (in_array($order->get_status(), array('completed', 'refunded', 'cancelled'), true)) {
+        wp_redirect(add_query_arg('op_notice', 'already_terminal', wp_get_referer()));
+        exit;
+    }
+
+    $order->update_status('processing', __('Payment manually confirmed by admin via Orangepill dashboard.', 'orangepill-wc'));
+    $order->update_meta_data('_orangepill_payment_status', 'succeeded');
+    $order->update_meta_data('_orangepill_payment_confirmed_at', current_time('mysql'));
+    $order->save();
+
+    OP_Logger::info(
+        'payment_manually_confirmed',
+        'Order #' . $order_id . ' manually marked as paid by admin',
+        array('order_id' => $order_id, 'admin_user' => get_current_user_id())
+    );
+
+    wp_redirect(add_query_arg('op_notice', 'marked_paid', wp_get_referer()));
+    exit;
 }
 
 /**
