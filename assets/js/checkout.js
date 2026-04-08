@@ -87,11 +87,36 @@
             if ($(this).is(':checked')) {
                 $('#orangepill_apply_wallet').val('1');
                 $('#orangepill_wallet_amount').val(spendable.toFixed(2));
+                showApplyPreview($widget, spendable, currency);
             } else {
                 $('#orangepill_apply_wallet').val('0');
                 $('#orangepill_wallet_amount').val('');
+                $('#op-wallet-preview').remove();
             }
         });
+    }
+
+    function showApplyPreview($widget, applying, currency) {
+        $('#op-wallet-preview').remove();
+
+        var cartTotal  = parseFloat(orangepillCheckout.cart_total || 0);
+        // Cap applying at order total (backend will enforce; this is UX hint only)
+        var applied    = Math.min(applying, cartTotal);
+        var remaining  = Math.max(0, cartTotal - applied);
+        var cur        = escapeHtml(currency);
+
+        var html =
+            '<p id="op-wallet-preview" class="op-wallet-preview">' +
+            escapeHtml(orangepillCheckout.i18n.applying_label) + ' <strong>' + formatAmount(applied, cur) + '</strong>' +
+            ' &nbsp;|&nbsp; ' +
+            escapeHtml(orangepillCheckout.i18n.remaining_label) + ' <strong>' + formatAmount(remaining, cur) + '</strong>' +
+            ' <em style="font-size:11px;color:#888;">*</em>' +
+            '</p>' +
+            '<p style="font-size:11px;color:#888;margin:2px 0 0 0;">* ' +
+            escapeHtml('Final amount determined by Orangepill') +
+            '</p>';
+
+        $widget.append(html);
     }
 
     function formatAmount(amount, currency) {

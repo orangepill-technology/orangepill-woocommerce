@@ -300,11 +300,34 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
                         'wallet_applied',
                         'Wallet balance applied to session',
                         array(
-                            'order_id'   => $order_id,
-                            'session_id' => $session_id,
-                            'amount'     => $wallet_amount,
+                            'order_id'        => $order_id,
+                            'session_id'      => $session_id,
+                            'amount'          => $wallet_amount,
+                            'payable_amount'  => $apply_result['remaining_amount'] ?? 'unknown',
                         )
                     );
+
+                    // Zero-payable guard: if wallet covers 100% of the order,
+                    // the backend completes the session internally — no hosted
+                    // checkout UI needed. Skip the redirect and finalise locally.
+                    $payable = (float) ($apply_result['remaining_amount'] ?? $apply_result['payable_amount'] ?? -1);
+                    if ($payable === 0.0) {
+                        $order->update_meta_data('_orangepill_payment_status', 'succeeded');
+                        $order->update_meta_data('_orangepill_payment_confirmed_at', current_time('mysql'));
+                        $order->save();
+                        $order->payment_complete();
+
+                        OP_Logger::info(
+                            'wallet_full_cover',
+                            'Order fully covered by wallet — skipping hosted checkout redirect',
+                            array('order_id' => $order_id, 'session_id' => $session_id)
+                        );
+
+                        return array(
+                            'result'   => 'success',
+                            'redirect' => $this->get_return_url($order),
+                        );
+                    }
                 }
             }
 
