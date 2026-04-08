@@ -362,18 +362,21 @@ class OP_Order_Metabox {
                 <p class="description" style="margin-bottom: 8px;">
                     <?php esc_html_e('Webhooks not received? Verify payment in Orangepill dashboard then confirm manually.', 'orangepill-wc'); ?>
                 </p>
-                <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
-                    <input type="hidden" name="action"   value="orangepill_mark_paid" />
-                    <input type="hidden" name="order_id" value="<?php echo esc_attr($order->get_id()); ?>" />
-                    <input type="hidden" name="nonce"    value="<?php echo esc_attr(wp_create_nonce('orangepill_wc_admin')); ?>" />
-                    <button
-                        type="submit"
-                        class="button button-primary button-small"
-                        onclick="return confirm('<?php echo esc_js(__('Mark this order as paid?\n\nOnly do this after verifying payment in the Orangepill dashboard.', 'orangepill-wc')); ?>');"
-                    >
-                        <?php esc_html_e('Mark as Paid', 'orangepill-wc'); ?>
-                    </button>
-                </form>
+                <?php
+                // Use a GET link — metabox is inside WP's outer <form>, nested forms are invalid HTML
+                // and cause the browser to submit the outer form instead of ours.
+                $mark_paid_url = wp_nonce_url(
+                    admin_url('admin-post.php?action=orangepill_mark_paid&order_id=' . $order->get_id()),
+                    'orangepill_mark_paid_' . $order->get_id()
+                );
+                ?>
+                <a
+                    href="<?php echo esc_url($mark_paid_url); ?>"
+                    class="button button-primary button-small"
+                    onclick="return confirm('<?php echo esc_js(__('Mark this order as paid?\n\nOnly do this after verifying payment in the Orangepill dashboard.', 'orangepill-wc')); ?>');"
+                >
+                    <?php esc_html_e('Mark as Paid', 'orangepill-wc'); ?>
+                </a>
             </div>
             <?php endif; ?>
         </div>

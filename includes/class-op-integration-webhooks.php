@@ -119,7 +119,16 @@ class OP_Integration_Webhooks {
             'events' => self::EVENTS,
         );
         if (!empty($webhook_secret)) {
-            $payload['secret'] = $webhook_secret;
+            if (strlen($webhook_secret) < 8) {
+                // API enforces minimum 8 characters — skip secret and warn operator
+                OP_Logger::warning(
+                    'integration_webhook_secret_too_short',
+                    'Webhook secret is shorter than 8 characters and will not be sent. Update the Webhook Secret in settings.',
+                    array('integration_id' => $integration_id, 'secret_length' => strlen($webhook_secret))
+                );
+            } else {
+                $payload['secret'] = $webhook_secret;
+            }
         }
 
         if ($match_id) {

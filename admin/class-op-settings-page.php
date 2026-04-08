@@ -35,8 +35,11 @@ class OP_Settings_Page {
     public function render() {
         // Check if settings were saved
         if (isset($_POST['orangepill_save_settings']) && check_admin_referer('orangepill_settings')) {
-            $this->save_settings();
+            $warnings = $this->save_settings();
             echo '<div class="notice notice-success"><p>' . esc_html__('Settings saved successfully.', 'orangepill-wc') . '</p></div>';
+            foreach ($warnings as $warning) {
+                echo '<div class="notice notice-warning"><p>' . esc_html($warning) . '</p></div>';
+            }
         }
 
         $gateway = new OP_Payment_Gateway();
@@ -197,7 +200,26 @@ class OP_Settings_Page {
 
                     <tr>
                         <th scope="row">
-                            <?php esc_html_e('Webhook URL', 'orangepill-wc'); ?>
+                            <label for="webhook_public_url"><?php esc_html_e('Public Webhook URL', 'orangepill-wc'); ?></label>
+                        </th>
+                        <td>
+                            <input
+                                type="text"
+                                name="webhook_public_url"
+                                id="webhook_public_url"
+                                value="<?php echo esc_attr($settings['webhook_public_url'] ?? ''); ?>"
+                                class="regular-text"
+                                placeholder="https://your-ngrok-domain.ngrok.app/?wc-api=orangepill-webhook"
+                            />
+                            <p class="description">
+                                <?php esc_html_e('Override the webhook URL registered with Orangepill. Required for local dev (ngrok) or reverse-proxy environments where the site URL is not publicly reachable. Leave empty in production.', 'orangepill-wc'); ?>
+                            </p>
+                        </td>
+                    </tr>
+
+                    <tr>
+                        <th scope="row">
+                            <?php esc_html_e('Active Webhook URL', 'orangepill-wc'); ?>
                         </th>
                         <td>
                             <div style="display: flex; align-items: center; gap: 10px;">
@@ -217,7 +239,7 @@ class OP_Settings_Page {
                                 </button>
                             </div>
                             <p class="description">
-                                <?php esc_html_e('Configure this webhook URL in your Orangepill dashboard', 'orangepill-wc'); ?>
+                                <?php esc_html_e('This is the URL currently registered with Orangepill. Shown for reference.', 'orangepill-wc'); ?>
                             </p>
                         </td>
                     </tr>
@@ -321,18 +343,26 @@ class OP_Settings_Page {
 
     /**
      * Save settings
+     *
+     * @return string[] Array of warning messages to display (may be empty)
      */
     private function save_settings() {
-        $gateway = new OP_Payment_Gateway();
+        $gateway  = new OP_Payment_Gateway();
+        $warnings = array();
 
         $settings = array(
-            'api_key'          => sanitize_text_field($_POST['api_key'] ?? ''),
-            'api_base_url'     => esc_url_raw($_POST['api_base_url'] ?? 'https://console.orangepill.cloud'),
-            'integration_id'   => sanitize_text_field($_POST['integration_id'] ?? ''),
-            'merchant_id'      => sanitize_text_field($_POST['merchant_id'] ?? ''),
-            'webhook_secret'   => sanitize_text_field($_POST['webhook_secret'] ?? ''),
-            'checkout_ui_url'  => esc_url_raw($_POST['checkout_ui_url'] ?? 'https://checkout.orangepill.cloud'),
+            'api_key'            => sanitize_text_field($_POST['api_key'] ?? ''),
+            'api_base_url'       => esc_url_raw($_POST['api_base_url'] ?? 'https://console.orangepill.cloud'),
+            'integration_id'     => sanitize_text_field($_POST['integration_id'] ?? ''),
+            'merchant_id'        => sanitize_text_field($_POST['merchant_id'] ?? ''),
+            'webhook_secret'     => sanitize_text_field($_POST['webhook_secret'] ?? ''),
+            'checkout_ui_url'    => esc_url_raw($_POST['checkout_ui_url'] ?? 'https://checkout.orangepill.cloud'),
+            'webhook_public_url' => esc_url_raw($_POST['webhook_public_url'] ?? ''),
         );
+
+        if (!empty($settings['webhook_secret']) && strlen($settings['webhook_secret']) < 8) {
+            $warnings[] = __('Webhook Secret must be at least 8 characters. The secret was not sent to Orangepill — please update it and save again.', 'orangepill-wc');
+        }
 
         update_option('woocommerce_orangepill_settings', array_merge($gateway->settings, $settings));
 
@@ -352,6 +382,8 @@ class OP_Settings_Page {
         } else {
             OP_Integration_Webhooks::clear_status();
         }
+
+        return $warnings;
     }
 
     /**

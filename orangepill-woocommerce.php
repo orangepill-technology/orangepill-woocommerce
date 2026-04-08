@@ -3,7 +3,7 @@
  * Plugin Name: Orangepill for WooCommerce
  * Plugin URI: https://github.com/orangepill-technology/orangepill-woocommerce
  * Description: Accept payments via Orangepill - embedded finance infrastructure for modern commerce platforms
- * Version: 1.0.0
+ * Version: 1.1.0
  * Author: Orangepill
  * Author URI: https://orangepill.technology
  * License: GPL-2.0+
@@ -22,7 +22,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ORANGEPILL_WC_VERSION', '1.0.0');
+define('ORANGEPILL_WC_VERSION', '1.1.0');
 define('ORANGEPILL_WC_PLUGIN_FILE', __FILE__);
 define('ORANGEPILL_WC_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ORANGEPILL_WC_PLUGIN_URL', plugin_dir_url(__FILE__));
@@ -34,9 +34,17 @@ define('ORANGEPILL_WC_PLUGIN_BASENAME', plugin_basename(__FILE__));
  * Single source of truth — used by OP_Integration_Webhooks (registration)
  * and OP_Payment_Gateway (session-level fallback). Never duplicate this logic.
  *
+ * Respects the "Public Webhook URL" setting for ngrok / reverse-proxy environments
+ * where home_url() is not publicly reachable.
+ *
  * @return string Full webhook endpoint URL
  */
 function orangepill_wc_get_webhook_url() {
+    $settings = get_option('woocommerce_orangepill_settings', array());
+    $override  = trim($settings['webhook_public_url'] ?? '');
+    if (!empty($override)) {
+        return rtrim($override, '/');
+    }
     return home_url('/?wc-api=orangepill-webhook');
 }
 
@@ -213,19 +221,15 @@ function orangepill_wc_enqueue_admin_assets($hook) {
  * by shop operators who have verified payment in the Orangepill dashboard.
  */
 function orangepill_wc_mark_paid() {
-    if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'orangepill_wc_admin')) {
+    $order_id = isset($_REQUEST['order_id']) ? intval($_REQUEST['order_id']) : 0;
+
+    if (!$order_id || !check_admin_referer('orangepill_mark_paid_' . $order_id)) {
         wp_die(__('Security check failed', 'orangepill-wc'));
     }
 
     if (!current_user_can('manage_woocommerce')) {
         wp_die(__('Permission denied', 'orangepill-wc'));
     }
-
-    $order_id = isset($_POST['order_id']) ? intval($_POST['order_id']) : 0;
-    if (!$order_id) {
-        wp_die(__('Invalid order ID', 'orangepill-wc'));
-    }
-
     $order = wc_get_order($order_id);
     if (!$order || $order->get_payment_method() !== 'orangepill') {
         wp_die(__('Order not found or not an Orangepill order', 'orangepill-wc'));
