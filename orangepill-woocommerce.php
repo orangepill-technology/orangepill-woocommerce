@@ -120,12 +120,7 @@ function orangepill_wc_init() {
     // Enqueue frontend checkout assets
     add_action('wp_enqueue_scripts', 'orangepill_wc_enqueue_checkout_assets');
 
-    // Move Orangepill orders from pending → on-hold when customer returns to thank-you page.
-    // Webhooks are the authoritative payment confirmation; this is a safe holding state
-    // for when webhooks can't reach the server (e.g. local dev / firewall).
-    add_action('woocommerce_thankyou', 'orangepill_wc_thankyou_hold');
-
-    // Admin: manual "Mark as Paid" action for orders stuck in pending/on-hold
+    // Admin: manual "Mark as Paid" action (reconciliation — not polling)
     add_action('admin_post_orangepill_mark_paid', 'orangepill_wc_mark_paid');
 
     // PR-WC-3b: Replay admin action handler
@@ -200,39 +195,6 @@ function orangepill_wc_enqueue_admin_assets($hook) {
 }
 
 /**
- * Move Orangepill orders from pending → on-hold when customer returns to thank-you page.
- *
- * Webhooks are the primary mechanism for payment confirmation. This hook provides
- * a safe fallback for environments where webhooks can't reach the server (local dev).
- * on-hold = "we sent the customer to pay, awaiting webhook confirmation".
- *
- * @param int $order_id WooCommerce order ID
- */
-function orangepill_wc_thankyou_hold($order_id) {
-    $order = wc_get_order($order_id);
-
-    if (!$order || $order->get_payment_method() !== 'orangepill') {
-        return;
-    }
-
-    // Only transition from pending — don't downgrade already-confirmed orders
-    if ($order->get_status() !== 'pending') {
-        return;
-    }
-
-    $order->update_status(
-        'on-hold',
-        __('Customer returned from Orangepill checkout. Awaiting payment confirmation webhook.', 'orangepill-wc')
-    );
-
-    OP_Logger::info(
-        'order_held_pending_webhook',
-        'Order moved to on-hold — awaiting webhook confirmation',
-        array('order_id' => $order_id)
-    );
-}
-
-/**
  * Admin: manually mark an Orangepill order as paid (processing).
  *
  * Safety net for when webhooks cannot reach the server. Intended for use
@@ -263,10 +225,11 @@ function orangepill_wc_mark_paid() {
         exit;
     }
 
-    $order->update_status('processing', __('Payment manually confirmed by admin via Orangepill dashboard.', 'orangepill-wc'));
     $order->update_meta_data('_orangepill_payment_status', 'succeeded');
     $order->update_meta_data('_orangepill_payment_confirmed_at', current_time('mysql'));
     $order->save();
+    $order->add_order_note(__('Payment manually confirmed by admin after verifying in Orangepill dashboard.', 'orangepill-wc'));
+    $order->payment_complete();
 
     OP_Logger::info(
         'payment_manually_confirmed',

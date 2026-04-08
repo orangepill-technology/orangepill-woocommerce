@@ -229,8 +229,6 @@ class OP_Webhook_Handler {
             return;
         }
 
-        $order->update_status('processing', __('Payment confirmed by Orangepill', 'orangepill-wc'));
-
         if (!empty($payment_id)) {
             $order->update_meta_data('_orangepill_payment_id', $payment_id);
         }
@@ -241,6 +239,10 @@ class OP_Webhook_Handler {
             $this->mark_event_processed($order, $event_id, $payload_hash);
         }
         $order->save();
+
+        // payment_complete() is the canonical WC method: reduces stock, sends emails,
+        // transitions to processing/completed. Webhook is the ONLY caller of this.
+        $order->payment_complete($payment_id ?: '');
 
         OP_Logger::info(
             'checkout_session_succeeded',
@@ -409,23 +411,18 @@ class OP_Webhook_Handler {
             }
         }
 
-        // Update order status to processing
-        $order->update_status('processing', __('Payment confirmed by Orangepill', 'orangepill-wc'));
-
-        // Store payment_id in order meta
         if (!empty($payment_id)) {
             $order->update_meta_data('_orangepill_payment_id', $payment_id);
         }
-
         $order->update_meta_data('_orangepill_payment_status', 'succeeded');
         $order->update_meta_data('_orangepill_payment_confirmed_at', current_time('mysql'));
 
-        // Mark event as processed (idempotency with payload hash)
         if (!empty($event_id)) {
             $this->mark_event_processed($order, $event_id, $payload_hash);
         }
-
         $order->save();
+
+        $order->payment_complete($payment_id ?: '');
 
         OP_Logger::info(
             'payment_succeeded',
