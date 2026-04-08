@@ -85,11 +85,20 @@ class OP_Customer_Sync {
         ));
 
         if (is_wp_error($result)) {
-            OP_Sync_Journal::mark_failed($event_id, $result->get_error_message());
+            // On "already exists" conflict, fetch the customer by external_id instead
+            $error_data = $result->get_error_data();
+            $status     = $error_data['status_code'] ?? 0;
+            $message    = $result->get_error_message();
 
+            if ($status === 400 && stripos($message, 'already exists') !== false) {
+                OP_Sync_Journal::mark_sent($event_id, array('note' => 'conflict_fetch_fallback'));
+                return $this->fetch_by_external_id($user_id, $api);
+            }
+
+            OP_Sync_Journal::mark_failed($event_id, $message);
             OP_Logger::error(
                 'customer_creation_failed',
-                'Failed to create Orangepill customer: ' . $result->get_error_message(),
+                'Failed to create Orangepill customer: ' . $message,
                 array(
                     'user_id'         => $user_id,
                     'email'           => $user->user_email,
@@ -122,6 +131,55 @@ class OP_Customer_Sync {
                 'event_id'        => $event_id,
                 'idempotency_key' => $event->idempotency_key,
             )
+        );
+
+        return $customer_id;
+    }
+
+    /**
+     * Fetch existing customer by external_id (conflict recovery).
+     *
+     * Called when POST /v4/customers returns 400 "already exists".
+     * GET /v4/customers?external_id=woo:{user_id} → cache + return ID.
+     *
+     * @param int           $user_id WordPress user ID
+     * @param OP_API_Client $api     API client instance
+     * @return string|WP_Error Customer ID or error
+     */
+    private function fetch_by_external_id($user_id, $api) {
+        $external_id = 'woo:' . $user_id;
+        $result      = $api->request('GET', '/v4/customers?external_id=' . rawurlencode($external_id));
+
+        if (is_wp_error($result)) {
+            OP_Logger::error(
+                'customer_fetch_failed',
+                'Failed to fetch customer by external_id: ' . $result->get_error_message(),
+                array('user_id' => $user_id, 'external_id' => $external_id)
+            );
+            return $result;
+        }
+
+        // Response shape: { data: { customers: [...] } }
+        $customers   = $result['data']['customers'] ?? $result['customers'] ?? $result['data'] ?? array();
+        $customer_id = null;
+
+        foreach ((array) $customers as $customer) {
+            if (isset($customer['external_id']) && $customer['external_id'] === $external_id) {
+                $customer_id = $customer['id'];
+                break;
+            }
+        }
+
+        if (empty($customer_id)) {
+            return new WP_Error('customer_not_found', __('Customer not found by external_id after conflict', 'orangepill-wc'));
+        }
+
+        update_user_meta($user_id, '_orangepill_customer_id', $customer_id);
+
+        OP_Logger::info(
+            'customer_fetched_on_conflict',
+            'Resolved existing customer via external_id lookup',
+            array('user_id' => $user_id, 'customer_id' => $customer_id)
         );
 
         return $customer_id;
