@@ -123,6 +123,74 @@ class OP_API_Client {
         ));
     }
 
+    // ─── Integration-level webhook management (PR-WC-INTEGRATION-WEBHOOKS-1) ──
+
+    /**
+     * Register a webhook on the integration (primary webhook path).
+     *
+     * POST /v4/commerce/integrations/{id}/webhooks
+     *
+     * @param string $integration_id Orangepill integration ID
+     * @param array  $payload        {url, events[], secret?}
+     * @return array|WP_Error Created webhook object or error
+     */
+    public function register_integration_webhook($integration_id, $payload) {
+        return $this->request(
+            'POST',
+            '/v4/commerce/integrations/' . rawurlencode($integration_id) . '/webhooks',
+            $payload
+        );
+    }
+
+    /**
+     * List webhooks registered on the integration.
+     *
+     * GET /v4/commerce/integrations/{id}/webhooks
+     *
+     * @param string $integration_id Orangepill integration ID
+     * @return array|WP_Error Webhook list or error
+     */
+    public function list_integration_webhooks($integration_id) {
+        return $this->request(
+            'GET',
+            '/v4/commerce/integrations/' . rawurlencode($integration_id) . '/webhooks'
+        );
+    }
+
+    /**
+     * Update an existing integration webhook.
+     *
+     * PATCH /v4/commerce/integrations/{id}/webhooks/{webhook_id}
+     *
+     * @param string $integration_id Orangepill integration ID
+     * @param string $webhook_id     Webhook ID
+     * @param array  $payload        Fields to update
+     * @return array|WP_Error Updated webhook or error
+     */
+    public function update_integration_webhook($integration_id, $webhook_id, $payload) {
+        return $this->request(
+            'PATCH',
+            '/v4/commerce/integrations/' . rawurlencode($integration_id) . '/webhooks/' . rawurlencode($webhook_id),
+            $payload
+        );
+    }
+
+    /**
+     * Delete an integration webhook.
+     *
+     * DELETE /v4/commerce/integrations/{id}/webhooks/{webhook_id}
+     *
+     * @param string $integration_id Orangepill integration ID
+     * @param string $webhook_id     Webhook ID
+     * @return array|WP_Error Result or error
+     */
+    public function delete_integration_webhook($integration_id, $webhook_id) {
+        return $this->request(
+            'DELETE',
+            '/v4/commerce/integrations/' . rawurlencode($integration_id) . '/webhooks/' . rawurlencode($webhook_id)
+        );
+    }
+
     /**
      * Validate integration
      *

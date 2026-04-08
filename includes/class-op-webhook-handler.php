@@ -136,12 +136,19 @@ class OP_Webhook_Handler {
 
         switch ($event_type) {
             // PR-OP-WOO-INTEGRATION-CORE-1 Part 7: checkout session events
+            // "completed" = integration-level webhook name; "succeeded" = session-level callback name
+            case 'checkout.session.completed':
             case 'checkout.session.succeeded':
                 $this->handle_checkout_session_succeeded($event_data, $payload_hash);
                 break;
 
             case 'checkout.session.failed':
                 $this->handle_checkout_session_failed($event_data, $payload_hash);
+                break;
+
+            // PR-WC-INTEGRATION-WEBHOOKS-1: session expired — cancel pending order
+            case 'checkout.session.expired':
+                $this->handle_checkout_session_expired($event_data, $payload_hash);
                 break;
 
             // Legacy payment events (kept for backward compatibility)
@@ -340,6 +347,90 @@ class OP_Webhook_Handler {
                 'session_id'     => $session_id,
                 'event_id'       => $event_id,
                 'failure_reason' => $failure_reason,
+            )
+        );
+    }
+
+    /**
+     * Handle checkout.session.expired event (PR-WC-INTEGRATION-WEBHOOKS-1)
+     *
+     * Fired when a checkout session times out without payment. Cancels the
+     * WC order so stock is released and the customer can retry.
+     *
+     * @param array  $data         Event data (session object)
+     * @param string $payload_hash SHA256 hash of raw payload for idempotency
+     */
+    private function handle_checkout_session_expired($data, $payload_hash) {
+        $session_id = $data['id'] ?? ($data['session_id'] ?? null);
+        $event_id   = $data['event_id'] ?? null;
+
+        if (empty($session_id)) {
+            OP_Logger::warning(
+                'webhook_missing_session_id',
+                'checkout.session.expired event missing session id'
+            );
+            return;
+        }
+
+        $order = $this->find_order_by_session_id($session_id);
+
+        if (!$order) {
+            OP_Logger::warning(
+                'webhook_order_not_found',
+                'Order not found for session_id: ' . $session_id,
+                array('session_id' => $session_id)
+            );
+            return;
+        }
+
+        OP_Sync_Journal::record_inbound_received('checkout.session.expired', $order->get_id(), $data);
+
+        if (!empty($event_id)) {
+            $check = $this->is_event_processed($order, $event_id, $payload_hash);
+            if ($check === true) {
+                OP_Logger::info(
+                    'webhook_duplicate_event',
+                    'Duplicate checkout.session.expired ignored',
+                    array('order_id' => $order->get_id(), 'event_id' => $event_id)
+                );
+                return;
+            } elseif ($check === 'hash_mismatch') {
+                OP_Logger::error(
+                    'webhook_event_id_reuse',
+                    'Event ID reuse with different payload detected',
+                    array('order_id' => $order->get_id(), 'event_id' => $event_id)
+                );
+                return;
+            }
+        }
+
+        // Protect terminal states — don't cancel a completed or refunded order
+        $current_status = $order->get_status();
+        if (in_array($current_status, array('completed', 'processing', 'refunded', 'cancelled'), true)) {
+            OP_Logger::info(
+                'webhook_terminal_state_protected',
+                'Order already in terminal state, skipping checkout.session.expired',
+                array('order_id' => $order->get_id(), 'status' => $current_status)
+            );
+            return;
+        }
+
+        $order->update_status('cancelled', __('Orangepill checkout session expired without payment.', 'orangepill-wc'));
+        $order->update_meta_data('_orangepill_payment_status', 'expired');
+        $order->update_meta_data('_orangepill_session_expired_at', current_time('mysql'));
+
+        if (!empty($event_id)) {
+            $this->mark_event_processed($order, $event_id, $payload_hash);
+        }
+        $order->save();
+
+        OP_Logger::info(
+            'checkout_session_expired',
+            'Checkout session expired for order #' . $order->get_id() . ' — order cancelled',
+            array(
+                'order_id'   => $order->get_id(),
+                'session_id' => $session_id,
+                'event_id'   => $event_id,
             )
         );
     }

@@ -29,6 +29,18 @@ define('ORANGEPILL_WC_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('ORANGEPILL_WC_PLUGIN_BASENAME', plugin_basename(__FILE__));
 
 /**
+ * Canonical webhook URL for this site.
+ *
+ * Single source of truth — used by OP_Integration_Webhooks (registration)
+ * and OP_Payment_Gateway (session-level fallback). Never duplicate this logic.
+ *
+ * @return string Full webhook endpoint URL
+ */
+function orangepill_wc_get_webhook_url() {
+    return home_url('/?wc-api=orangepill-webhook');
+}
+
+/**
  * PSR-4 Autoloader for plugin classes
  */
 spl_autoload_register(function ($class) {

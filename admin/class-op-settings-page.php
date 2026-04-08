@@ -26,6 +26,7 @@ class OP_Settings_Page {
      */
     public function __construct() {
         add_action('wp_ajax_orangepill_test_connection', array($this, 'ajax_test_connection'));
+        add_action('wp_ajax_orangepill_retry_webhook_registration', array($this, 'ajax_retry_webhook_registration'));
     }
 
     /**
@@ -44,20 +45,39 @@ class OP_Settings_Page {
         // Get cached validation result
         $validation_result = get_transient(self::VALIDATION_CACHE_KEY);
 
+        // Get webhook registration status
+        $webhook_status = OP_Integration_Webhooks::get_status();
+
         ?>
         <div class="wrap">
             <h1><?php esc_html_e('Orangepill Settings', 'orangepill-wc'); ?></h1>
 
-            <!-- Connection Status Panel -->
-            <div class="orangepill-connection-status">
-                <h2><?php esc_html_e('Connection Status', 'orangepill-wc'); ?></h2>
-                <div class="orangepill-status-card">
-                    <?php $this->render_connection_status($validation_result); ?>
-                    <div style="margin-top: 15px;">
-                        <button type="button" id="orangepill-test-connection" class="button button-secondary">
-                            <?php esc_html_e('Test Connection', 'orangepill-wc'); ?>
-                        </button>
-                        <span id="orangepill-test-spinner" class="spinner" style="float: none; margin: 0 10px;"></span>
+            <div style="display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 20px;">
+                <!-- Connection Status Panel -->
+                <div class="orangepill-connection-status" style="flex: 1; min-width: 280px;">
+                    <h2><?php esc_html_e('Connection Status', 'orangepill-wc'); ?></h2>
+                    <div class="orangepill-status-card">
+                        <?php $this->render_connection_status($validation_result); ?>
+                        <div style="margin-top: 15px;">
+                            <button type="button" id="orangepill-test-connection" class="button button-secondary">
+                                <?php esc_html_e('Test Connection', 'orangepill-wc'); ?>
+                            </button>
+                            <span id="orangepill-test-spinner" class="spinner" style="float: none; margin: 0 10px;"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Webhook Registration Status Panel -->
+                <div class="orangepill-connection-status" style="flex: 1; min-width: 280px;">
+                    <h2><?php esc_html_e('Webhook Registration', 'orangepill-wc'); ?></h2>
+                    <div class="orangepill-status-card" id="orangepill-webhook-status-card">
+                        <?php $this->render_webhook_registration_status($webhook_status); ?>
+                        <div style="margin-top: 15px;">
+                            <button type="button" id="orangepill-retry-webhook" class="button button-secondary">
+                                <?php esc_html_e('Retry Registration', 'orangepill-wc'); ?>
+                            </button>
+                            <span id="orangepill-webhook-spinner" class="spinner" style="float: none; margin: 0 10px;"></span>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -183,7 +203,7 @@ class OP_Settings_Page {
                             <div style="display: flex; align-items: center; gap: 10px;">
                                 <input
                                     type="text"
-                                    value="<?php echo esc_url(WC()->api_request_url('orangepill-webhook')); ?>"
+                                    value="<?php echo esc_url(orangepill_wc_get_webhook_url()); ?>"
                                     readonly
                                     class="regular-text"
                                     id="orangepill-webhook-url"
@@ -251,6 +271,55 @@ class OP_Settings_Page {
     }
 
     /**
+     * Render webhook registration status
+     *
+     * @param array|null $status Last registration result or null if never attempted
+     */
+    private function render_webhook_registration_status($status) {
+        if (empty($status)) {
+            echo '<div class="orangepill-status-indicator orangepill-status-unknown">';
+            echo '<span class="dashicons dashicons-minus"></span>';
+            echo '<span>' . esc_html__('Not registered — save settings to register', 'orangepill-wc') . '</span>';
+            echo '</div>';
+            return;
+        }
+
+        if ($status['success']) {
+            echo '<div class="orangepill-status-indicator orangepill-status-success">';
+            echo '<span class="dashicons dashicons-yes-alt"></span>';
+            echo '<span>' . esc_html__('Registered', 'orangepill-wc') . '</span>';
+            echo '</div>';
+            if (!empty($status['webhook_id'])) {
+                echo '<p class="description">' . esc_html__('Webhook ID: ', 'orangepill-wc') . esc_html($status['webhook_id']) . '</p>';
+            }
+            if (!empty($status['timestamp'])) {
+                echo '<p class="description">' . esc_html__('Last registered: ', 'orangepill-wc') . esc_html($status['timestamp']) . '</p>';
+            }
+        } else {
+            echo '<div class="orangepill-status-indicator orangepill-status-error">';
+            echo '<span class="dashicons dashicons-warning"></span>';
+            echo '<span>' . esc_html__('Registration failed', 'orangepill-wc') . '</span>';
+            echo '</div>';
+            echo '<p class="description" style="color: #d63638;">' . esc_html($status['message']) . '</p>';
+        }
+    }
+
+    /**
+     * AJAX handler: manually retry webhook registration
+     */
+    public function ajax_retry_webhook_registration() {
+        check_ajax_referer('orangepill_wc_admin', 'nonce');
+
+        if (!current_user_can('manage_woocommerce')) {
+            wp_send_json_error(array('message' => __('Permission denied', 'orangepill-wc')));
+        }
+
+        $result = OP_Integration_Webhooks::register_or_update();
+
+        wp_send_json_success($result);
+    }
+
+    /**
      * Save settings
      */
     private function save_settings() {
@@ -275,6 +344,14 @@ class OP_Settings_Page {
             'Orangepill settings updated',
             array('has_api_key' => !empty($settings['api_key']))
         );
+
+        // Register/update integration-level webhook now that settings are saved.
+        // PRIMARY delivery path — fires on every save so URL/event changes propagate.
+        if (!empty($settings['api_key']) && !empty($settings['integration_id'])) {
+            OP_Integration_Webhooks::register_or_update();
+        } else {
+            OP_Integration_Webhooks::clear_status();
+        }
     }
 
     /**

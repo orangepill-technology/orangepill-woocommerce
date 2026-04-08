@@ -202,11 +202,18 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
                     'channel'      => 'web',
                     'woo_order_id' => (string) $order_id,
                 ),
-                'callback'        => array(
-                    'url'    => $this->get_webhook_callback_url(),
-                    'events' => array('checkout.session.completed', 'checkout.session.failed'),
-                ),
             );
+
+            // Session-level callback: FALLBACK ONLY — used when integration-level webhook is
+            // not yet registered (e.g. first checkout before settings were saved, or API down
+            // during registration). Primary delivery path is OP_Integration_Webhooks.
+            $webhook_status = OP_Integration_Webhooks::get_status();
+            if (empty($webhook_status) || !$webhook_status['success']) {
+                $session_params['callback'] = array(
+                    'url'    => orangepill_wc_get_webhook_url(),
+                    'events' => array('checkout.session.completed', 'checkout.session.failed'),
+                );
+            }
 
             // Pass customer_id if we have one (never inline data for registered users)
             if ($customer_id) {
@@ -374,20 +381,12 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
     }
 
     /**
-     * Get the webhook callback URL to pass in checkout session creation.
-     *
-     * Uses the "Public Webhook URL" setting when set (required for local dev
-     * behind ngrok). Falls back to the auto-generated WooCommerce API URL
-     * for production where the store has a real public hostname.
-     *
-     * @return string Fully-qualified webhook URL
+     * @deprecated PR-WC-INTEGRATION-WEBHOOKS-1
+     * Webhook URL is now handled by the global orangepill_wc_get_webhook_url() helper.
+     * Session-level callback is only a fallback — see process_payment().
      */
     private function get_webhook_callback_url() {
-        $override = trim($this->get_option('webhook_public_url', ''));
-        if (!empty($override)) {
-            return rtrim($override, '/');
-        }
-        return WC()->api_request_url('orangepill-webhook');
+        return orangepill_wc_get_webhook_url();
     }
 
     /**
