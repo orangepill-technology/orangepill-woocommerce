@@ -204,16 +204,30 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
                 ),
             );
 
-            // Session-level callback: FALLBACK ONLY — used when integration-level webhook is
-            // not yet registered (e.g. first checkout before settings were saved, or API down
-            // during registration). Primary delivery path is OP_Integration_Webhooks.
+            // Determine webhook delivery path and log it for operator visibility.
+            // Integration-level webhook = PRIMARY (registered once on settings save).
+            // Session-level callback    = FALLBACK (only when integration webhook not confirmed).
             $webhook_status = OP_Integration_Webhooks::get_status();
-            if (empty($webhook_status) || !$webhook_status['success']) {
+            $using_fallback = empty($webhook_status) || !$webhook_status['success'];
+
+            if ($using_fallback) {
                 $session_params['callback'] = array(
                     'url'    => orangepill_wc_get_webhook_url(),
                     'events' => array('checkout.session.completed', 'checkout.session.failed'),
                 );
             }
+
+            OP_Logger::info(
+                'checkout_session_webhook_path',
+                $using_fallback
+                    ? 'Session created with session-level callback fallback (integration webhook not registered)'
+                    : 'Session created using integration-level webhook (primary path)',
+                array(
+                    'order_id'       => $order_id,
+                    'webhook_path'   => $using_fallback ? 'session_callback_fallback' : 'integration_webhook',
+                    'webhook_status' => $webhook_status['message'] ?? 'not registered',
+                )
+            );
 
             // Pass customer_id if we have one (never inline data for registered users)
             if ($customer_id) {

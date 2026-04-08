@@ -89,16 +89,30 @@ class OP_Integration_Webhooks {
             return $result;
         }
 
-        // Step 2: Find matching webhook by URL
+        // Step 2: Find all webhooks matching this URL (normally 0 or 1)
         $webhooks   = $existing['data'] ?? (is_array($existing) ? $existing : array());
-        $match_id   = null;
+        $matches    = array();
 
         foreach ($webhooks as $hook) {
             if (($hook['url'] ?? '') === $webhook_url) {
-                $match_id = $hook['id'] ?? null;
-                break;
+                $matches[] = $hook['id'] ?? null;
             }
         }
+
+        // Warn on duplicate registrations (platform should enforce uniqueness, but be explicit)
+        if (count($matches) > 1) {
+            OP_Logger::warning(
+                'integration_webhook_duplicate_url',
+                'Multiple integration webhooks found with same URL — will update first, others may be stale',
+                array(
+                    'integration_id' => $integration_id,
+                    'url'            => $webhook_url,
+                    'webhook_ids'    => $matches,
+                )
+            );
+        }
+
+        $match_id = $matches[0] ?? null;
 
         $payload = array(
             'url'    => $webhook_url,

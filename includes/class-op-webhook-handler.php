@@ -404,7 +404,9 @@ class OP_Webhook_Handler {
             }
         }
 
-        // Protect terminal states — don't cancel a completed or refunded order
+        // Terminal-state protection for expired sessions:
+        //   Allow cancel: pending, on-hold, failed (unpaid / not yet fulfilled)
+        //   Block  cancel: processing, completed, refunded, cancelled (already resolved)
         $current_status = $order->get_status();
         if (in_array($current_status, array('completed', 'processing', 'refunded', 'cancelled'), true)) {
             OP_Logger::info(
