@@ -58,9 +58,9 @@ class OP_Customer_Sync {
         $phone      = $order ? $order->get_billing_phone()      : get_user_meta($user_id, 'billing_phone', true);
 
         $customer_data = array(
-            'external_id' => 'woo:' . $user_id,   // Deduplication key
-            'email'       => $user->user_email,
-            'name'        => trim($first_name . ' ' . $last_name) ?: $user->display_name,
+            'external_id'  => 'woo:' . $user_id,   // Deduplication key
+            'email'        => $user->user_email,
+            'display_name' => trim($first_name . ' ' . $last_name) ?: $user->display_name,
         );
 
         if (!empty($phone)) {
