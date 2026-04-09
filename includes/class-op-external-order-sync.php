@@ -22,7 +22,6 @@ class OP_External_Order_Sync {
      */
     public function init() {
         add_action('woocommerce_new_order',            array($this, 'on_order_created'), 10, 2);
-        add_action('woocommerce_update_order',         array($this, 'on_order_updated'), 10, 2);
         add_action('woocommerce_order_status_changed', array($this, 'on_status_changed'), 10, 4);
     }
 
@@ -31,19 +30,6 @@ class OP_External_Order_Sync {
      * @param WC_Order|null $order    May be null on older WooCommerce versions
      */
     public function on_order_created($order_id, $order = null) {
-        if (!$order) {
-            $order = wc_get_order($order_id);
-        }
-        if ($order) {
-            $this->push($order);
-        }
-    }
-
-    /**
-     * @param int           $order_id
-     * @param WC_Order|null $order
-     */
-    public function on_order_updated($order_id, $order = null) {
         if (!$order) {
             $order = wc_get_order($order_id);
         }
