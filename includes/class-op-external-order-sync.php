@@ -152,8 +152,10 @@ class OP_External_Order_Sync {
                 'last_name'               => $order->get_billing_last_name(),
                 'orangepill_customer_id'  => $op_customer_id ?: null,
                 'billing'                 => array(
-                    'email' => $order->get_billing_email(),
-                    'phone' => $order->get_billing_phone(),
+                    'email'      => $order->get_billing_email(),
+                    'phone'      => $order->get_billing_phone(),
+                    'first_name' => $order->get_billing_first_name(),
+                    'last_name'  => $order->get_billing_last_name(),
                 ),
             ),
             'billingAddress'   => array(
