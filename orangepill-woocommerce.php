@@ -267,6 +267,13 @@ function orangepill_wc_enqueue_checkout_assets() {
         return;
     }
 
+    wp_enqueue_style(
+        'orangepill-wc-checkout',
+        ORANGEPILL_WC_PLUGIN_URL . 'assets/css/checkout.css',
+        array(),
+        ORANGEPILL_WC_VERSION
+    );
+
     wp_enqueue_script(
         'orangepill-wc-checkout',
         ORANGEPILL_WC_PLUGIN_URL . 'assets/js/checkout.js',
