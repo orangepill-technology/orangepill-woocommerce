@@ -3,7 +3,7 @@
  * Plugin Name: Orangepill for WooCommerce
  * Plugin URI: https://github.com/orangepill-technology/orangepill-woocommerce
  * Description: Accept payments via Orangepill - embedded finance infrastructure for modern commerce platforms
- * Version: 1.2.0
+ * Version: 1.3.0
  * Author: Orangepill
  * Author URI: https://orangepill.technology
  * License: GPL-2.0+
@@ -22,7 +22,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ORANGEPILL_WC_VERSION', '1.2.0');
+define('ORANGEPILL_WC_VERSION', '1.3.0');
 define('ORANGEPILL_WC_PLUGIN_FILE', __FILE__);
 define('ORANGEPILL_WC_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ORANGEPILL_WC_PLUGIN_URL', plugin_dir_url(__FILE__));
@@ -129,6 +129,10 @@ function orangepill_wc_init() {
     // [PR-WC-LOYALTY-1] Initialize refund sync for loyalty reversal triggers
     $refund_sync = new OP_Refund_Sync();
     $refund_sync->init();
+
+    // [PR-WC-EXTERNAL-ORDERS-SYNC-1] Push all orders to external-orders API (fire-and-forget)
+    $external_order_sync = new OP_External_Order_Sync();
+    $external_order_sync->init();
 
     // [PR-OP-WOO-INTEGRATION-CORE-1] My Account loyalty + rewards pages
     $my_account = new OP_My_Account();
