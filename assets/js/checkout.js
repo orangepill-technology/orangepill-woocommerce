@@ -30,8 +30,8 @@
             return;
         }
 
-        // Mark initialised — prevents double-fetch on rapid checkout updates
-        $widget.removeData('loading');
+        // Mark initialised — remove HTML attribute so updated_checkout re-runs don't re-fetch
+        $widget.removeAttr('data-loading');
 
         $.ajax({
             url: orangepillCheckout.ajax_url,
@@ -41,13 +41,17 @@
                 nonce:  orangepillCheckout.nonce,
             },
             success: function (response) {
+                console.log('[OP] wallet AJAX response:', JSON.stringify(response));
                 if (response.success && response.data && response.data.wallet) {
+                    console.log('[OP] rendering wallet widget, spendable:', response.data.wallet.spendable_balance);
                     renderWalletWidget($widget, response.data.wallet);
                 } else {
+                    console.log('[OP] no wallet returned, hiding widget');
                     $widget.hide();
                 }
             },
-            error: function () {
+            error: function (xhr, status, err) {
+                console.error('[OP] wallet AJAX error:', status, err);
                 // Silent failure — widget hidden, checkout unaffected
                 $widget.hide();
             },
@@ -85,9 +89,15 @@
 
         $('#op-use-wallet').on('change', function () {
             if ($(this).is(':checked')) {
+                var cartTotal = parseFloat(orangepillCheckout.cart_total || 0);
+                // Backend requires amount < session total (full coverage not allowed via this path).
+                // Token wallets apply at 1:1 (1 PCF = 1 COP), so cap against cart total directly.
+                var capped = (cartTotal > 0 && spendable >= cartTotal)
+                    ? parseFloat((cartTotal - 0.01).toFixed(2))
+                    : spendable;
                 $('#orangepill_apply_wallet').val('1');
-                $('#orangepill_wallet_amount').val(spendable.toFixed(2));
-                showApplyPreview($widget, spendable, currency);
+                $('#orangepill_wallet_amount').val(capped.toFixed(2));
+                showApplyPreview($widget, capped, currency);
             } else {
                 $('#orangepill_apply_wallet').val('0');
                 $('#orangepill_wallet_amount').val('');
@@ -99,22 +109,21 @@
     function showApplyPreview($widget, applying, currency) {
         $('#op-wallet-preview').remove();
 
-        var cartTotal  = parseFloat(orangepillCheckout.cart_total || 0);
-        // Cap applying at order total (backend will enforce; this is UX hint only)
-        var applied    = Math.min(applying, cartTotal);
-        var remaining  = Math.max(0, cartTotal - applied);
-        var cur        = escapeHtml(currency);
+        // Token wallets apply at 1:1 (1 PCF = 1 COP), so remaining is always in store currency.
+        var cartTotal   = parseFloat(orangepillCheckout.cart_total || 0);
+        var remaining   = Math.max(0, cartTotal - applying);
+        var walletCur   = escapeHtml(currency);
+        var storeCur    = escapeHtml(orangepillCheckout.currency || '');
 
-        var html =
-            '<p id="op-wallet-preview" class="op-wallet-preview">' +
-            escapeHtml(orangepillCheckout.i18n.applying_label) + ' <strong>' + formatAmount(applied, cur) + '</strong>' +
+        var html = '<div id="op-wallet-preview">';
+        html += '<p class="op-wallet-preview">' +
+            escapeHtml(orangepillCheckout.i18n.applying_label) + ' <strong>' + formatAmount(applying, walletCur) + '</strong>' +
             ' &nbsp;|&nbsp; ' +
-            escapeHtml(orangepillCheckout.i18n.remaining_label) + ' <strong>' + formatAmount(remaining, cur) + '</strong>' +
-            ' <em style="font-size:11px;color:#888;">*</em>' +
-            '</p>' +
-            '<p style="font-size:11px;color:#888;margin:2px 0 0 0;">* ' +
-            escapeHtml('Final amount determined by Orangepill') +
-            '</p>';
+            escapeHtml(orangepillCheckout.i18n.remaining_label) + ' <strong>' + formatAmount(remaining, storeCur) + '</strong>' +
+            ' <em style="font-size:11px;color:#888;">*</em></p>';
+        html += '<p style="font-size:11px;color:#888;margin:2px 0 0 0;">* ' +
+            escapeHtml('Final amount determined by Orangepill') + '</p>';
+        html += '</div>';
 
         $widget.append(html);
     }

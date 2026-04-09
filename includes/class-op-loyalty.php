@@ -17,7 +17,7 @@ class OP_Loyalty {
     /**
      * Transient TTL for wallet balance cache (5 minutes)
      */
-    const WALLET_CACHE_TTL = 300;
+    const WALLET_CACHE_TTL = 30;
 
     /**
      * Get wallet balances for a customer.
@@ -55,8 +55,10 @@ class OP_Loyalty {
             return $result;
         }
 
-        // API may return { data: [...] } or a bare array
-        $wallets = $result['data'] ?? (is_array($result) ? $result : array());
+        // API returns { data: { wallets: [...] } }
+        // Unwrap both levels: result → data → wallets
+        $data    = $result['data'] ?? $result;
+        $wallets = $data['wallets'] ?? (is_array($data) && isset($data[0]) ? $data : array());
 
         set_transient($cache_key, $wallets, self::WALLET_CACHE_TTL);
 
@@ -115,7 +117,7 @@ class OP_Loyalty {
      * @param string $wallet_id     Wallet ID (optional; uses primary wallet if omitted)
      * @return array|WP_Error Result or error
      */
-    public function apply_wallet_to_session($session_id, $amount, $wallet_id = '') {
+    public function apply_wallet_to_session($session_id, $amount, $wallet_id = '', $session_token = '') {
         if (empty($session_id) || empty($amount)) {
             return new WP_Error('missing_params', 'Session ID and amount are required');
         }
@@ -139,7 +141,7 @@ class OP_Loyalty {
             return new WP_Error('no_wallet', 'No wallet found to apply');
         }
 
-        return $api->apply_wallet_to_session($session_id, $wallet_id, $amount);
+        return $api->apply_wallet_to_session($session_id, $wallet_id, $amount, $session_token);
     }
 
     /**

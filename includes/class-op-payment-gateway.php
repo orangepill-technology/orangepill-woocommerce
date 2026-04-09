@@ -302,21 +302,28 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
 
             if ($apply_wallet && $customer_id && !empty($wallet_amount)) {
                 $loyalty = new OP_Loyalty();
-                // Pass wallet_id from hidden field — avoids a second API call server-side
-                $apply_result = $loyalty->apply_wallet_to_session($session_id, $wallet_amount, $wallet_id);
+                // /apply-wallet requires CheckoutSession auth scheme — pass client_secret as token
+                $apply_result = $loyalty->apply_wallet_to_session($session_id, $wallet_amount, $wallet_id, $client_secret);
 
                 if (is_wp_error($apply_result)) {
+                    $err_data = $apply_result->get_error_data();
                     OP_Logger::warning(
                         'wallet_apply_failed',
                         'Failed to apply wallet to session (continuing without): ' . $apply_result->get_error_message(),
                         array(
-                            'order_id'   => $order_id,
-                            'session_id' => $session_id,
-                            'amount'     => $wallet_amount,
+                            'order_id'        => $order_id,
+                            'session_id'      => $session_id,
+                            'wallet_id'       => $wallet_id,
+                            'amount'          => $wallet_amount,
+                            'http_status'     => $err_data['status_code'] ?? null,
+                            'api_response'    => $err_data['response'] ?? null,
                         )
                     );
                     // Non-fatal: continue to checkout without wallet applied
                 } else {
+                    // Invalidate cached wallet balance — it just changed
+                    $loyalty->invalidate_wallet_cache($customer_id);
+
                     $order->update_meta_data('_orangepill_wallet_applied', $wallet_amount);
                     OP_Logger::info(
                         'wallet_applied',
@@ -325,7 +332,7 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
                             'order_id'        => $order_id,
                             'session_id'      => $session_id,
                             'amount'          => $wallet_amount,
-                            'payable_amount'  => $apply_result['remaining_amount'] ?? 'unknown',
+                            'api_response'    => $apply_result,
                         )
                     );
 

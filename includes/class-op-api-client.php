@@ -116,11 +116,18 @@ class OP_API_Client {
      * @param string $amount        Amount to apply (string for precision)
      * @return array|WP_Error Result or error
      */
-    public function apply_wallet_to_session($session_id, $wallet_id, $amount) {
-        return $this->request('POST', '/v4/checkout/sessions/' . rawurlencode($session_id) . '/apply-wallet', array(
-            'wallet_id' => $wallet_id,
-            'amount'    => $amount,
-        ));
+    public function apply_wallet_to_session($session_id, $wallet_id, $amount, $session_token = '') {
+        // /apply-wallet requires CheckoutSession auth scheme, not the integration Bearer token.
+        $custom_headers = !empty($session_token)
+            ? array('Authorization' => 'CheckoutSession ' . $session_token)
+            : array();
+
+        return $this->request(
+            'POST',
+            '/v4/checkout/sessions/' . rawurlencode($session_id) . '/apply-wallet',
+            array('wallet_id' => $wallet_id, 'amount' => $amount),
+            $custom_headers
+        );
     }
 
     // ─── Integration-level webhook management (PR-WC-INTEGRATION-WEBHOOKS-1) ──
