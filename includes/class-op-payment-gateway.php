@@ -192,6 +192,7 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
             $api = new OP_API_Client();
 
             $session_params = array(
+                'integration_id'  => $this->get_option('integration_id'),
                 'merchant_id'     => $this->get_option('merchant_id'),
                 'amount'          => (string) $order->get_total(),
                 'currency'        => $order->get_currency(),
