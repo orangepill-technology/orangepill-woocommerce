@@ -97,6 +97,16 @@ class OP_External_Order_Sync {
             ),
             'body'     => wp_json_encode($payload),
         ));
+
+        OP_Logger::info(
+            'external_order_pushed',
+            'Order #' . $order->get_id() . ' pushed to external-orders API (fire-and-forget)',
+            array(
+                'order_id' => $order->get_id(),
+                'status'   => $order->get_status(),
+                'url'      => $url,
+            )
+        );
     }
 
     /**
