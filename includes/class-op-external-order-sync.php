@@ -133,10 +133,6 @@ class OP_External_Order_Sync {
         $op_session_id  = $order->get_meta('_orangepill_session_id', true);
         $op_payment_id  = $order->get_meta('_orangepill_payment_id', true);
 
-        // orderReference: send only when order_number differs from numeric ID
-        $order_number    = $order->get_order_number();
-        $order_reference = ($order_number !== (string) $order->get_id()) ? '#' . $order_number : null;
-
         return array(
             'externalOrderId'  => (string) $order->get_id(),
             'integrationId'    => $integration_id,
@@ -148,13 +144,14 @@ class OP_External_Order_Sync {
             'shippingAmount'   => (float) $order->get_shipping_total(),
             'discountAmount'   => (float) $order->get_discount_total(),
             'paymentMethod'    => $order->get_payment_method(),
-            'orderReference'   => $order_reference,
+            'orderReference'   => '#' . $order->get_order_number(),
             'customer'         => array(
-                'id'                    => $user_id ?: 0,
-                'orangepillCustomerId'  => $op_customer_id ?: null,
-                'firstName'             => $order->get_billing_first_name(),
-                'lastName'              => $order->get_billing_last_name(),
-                'billing'               => array(
+                'id'                      => $user_id ?: 0,
+                'email'                   => $order->get_billing_email(),
+                'first_name'              => $order->get_billing_first_name(),
+                'last_name'               => $order->get_billing_last_name(),
+                'orangepill_customer_id'  => $op_customer_id ?: null,
+                'billing'                 => array(
                     'email' => $order->get_billing_email(),
                     'phone' => $order->get_billing_phone(),
                 ),
