@@ -70,8 +70,12 @@ class OP_Webhook_Handler {
             return;
         }
 
+        // Capture integration-level event_id from header (for idempotency)
+        // Integration webhooks don't embed event_id in data; it's in the header.
+        $header_event_id = $_SERVER['HTTP_X_ORANGEPILL_EVENT_ID'] ?? null;
+
         // Process webhook event (with payload hash for idempotency)
-        $this->process_event($payload, $payload_hash);
+        $this->process_event($payload, $payload_hash, $header_event_id);
 
         // Return 200 OK
         $this->send_response(200, array('success' => true));
@@ -105,8 +109,13 @@ class OP_Webhook_Handler {
         // Remove common prefixes (e.g., "sha256=", "v1=")
         $clean_signature = preg_replace('/^[a-zA-Z0-9]+=/i', '', $signature);
 
+        // Orangepill signs over "{timestamp}.{body}" when X-Orangepill-Timestamp is present.
+        // Falls back to raw body only for backward compatibility.
+        $timestamp = $_SERVER['HTTP_X_ORANGEPILL_TIMESTAMP'] ?? null;
+        $signing_payload = $timestamp ? ($timestamp . '.' . $payload) : $payload;
+
         // Calculate expected signature using HMAC-SHA256 (hex encoding)
-        $expected_signature = hash_hmac('sha256', $payload, $webhook_secret);
+        $expected_signature = hash_hmac('sha256', $signing_payload, $webhook_secret);
 
         // Timing-safe comparison (protects against timing attacks)
         if (strlen($clean_signature) !== strlen($expected_signature)) {
@@ -119,17 +128,26 @@ class OP_Webhook_Handler {
     /**
      * Process webhook event
      *
-     * @param array $payload Webhook payload
-     * @param string $payload_hash SHA256 hash of raw payload
+     * @param array       $payload         Webhook payload
+     * @param string      $payload_hash    SHA256 hash of raw payload
+     * @param string|null $header_event_id Event ID from X-Orangepill-Event-Id header (integration webhooks)
      */
-    private function process_event($payload, $payload_hash) {
-        $event_type = $payload['type'] ?? null;
+    private function process_event($payload, $payload_hash, $header_event_id = null) {
+        // Integration-level webhooks use 'event'; session-level callbacks use 'type'.
+        $event_type = $payload['event'] ?? ($payload['type'] ?? null);
         $event_data = $payload['data'] ?? array();
+
+        // Merge header event_id into data so all handlers use $data['event_id'] uniformly.
+        // Integration webhooks send event_id in X-Orangepill-Event-Id header, not in data.
+        if (!empty($header_event_id) && empty($event_data['event_id'])) {
+            $event_data['event_id'] = $header_event_id;
+        }
 
         if (empty($event_type)) {
             OP_Logger::warning(
                 'webhook_missing_type',
-                'Webhook payload missing event type'
+                'Webhook payload missing event type',
+                array('payload_keys' => array_keys($payload))
             );
             return;
         }
