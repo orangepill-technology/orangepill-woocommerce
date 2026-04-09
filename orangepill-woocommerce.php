@@ -3,7 +3,7 @@
  * Plugin Name: Orangepill for WooCommerce
  * Plugin URI: https://github.com/orangepill-technology/orangepill-woocommerce
  * Description: Accept payments via Orangepill - embedded finance infrastructure for modern commerce platforms
- * Version: 1.1.0
+ * Version: 1.2.0
  * Author: Orangepill
  * Author URI: https://orangepill.technology
  * License: GPL-2.0+
@@ -22,7 +22,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ORANGEPILL_WC_VERSION', '1.1.0');
+define('ORANGEPILL_WC_VERSION', '1.2.0');
 define('ORANGEPILL_WC_PLUGIN_FILE', __FILE__);
 define('ORANGEPILL_WC_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ORANGEPILL_WC_PLUGIN_URL', plugin_dir_url(__FILE__));
@@ -266,6 +266,13 @@ function orangepill_wc_enqueue_checkout_assets() {
     if (!is_checkout()) {
         return;
     }
+
+    wp_enqueue_style(
+        'orangepill-wc-checkout',
+        ORANGEPILL_WC_PLUGIN_URL . 'assets/css/checkout.css',
+        array(),
+        ORANGEPILL_WC_VERSION
+    );
 
     wp_enqueue_script(
         'orangepill-wc-checkout',

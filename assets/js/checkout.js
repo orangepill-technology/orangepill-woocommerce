@@ -1,14 +1,14 @@
 /**
  * Orangepill WooCommerce — Checkout Rewards Wallet Widget
  *
- * PR-WC-CHECKOUT-WALLET-UX-1 Part 1:
- * Fetches the logged-in customer's spendable rewards balance from the server
- * and renders a compact opt-in toggle on the checkout page.
+ * Fetches the logged-in customer's spendable rewards balance and renders
+ * a slider + input box so the customer can choose how much to apply.
  *
  * Rules enforced here:
  *  - Woo never computes balances (amount comes from API response verbatim)
- *  - Woo never computes max applicable amount (full spendable shown; backend caps it)
- *  - Wallet ID passed through hidden field so server doesn't need a second API call
+ *  - Max applicable amount capped at cartTotal-0.01 (full coverage not allowed)
+ *  - Token wallets apply at 1:1 (1 PCF = 1 COP) for remaining-to-pay display
+ *  - Wallet ID passed through hidden field so server skips a second API call
  *  - Widget failure is silent — checkout always remains functional
  */
 
@@ -30,8 +30,8 @@
             return;
         }
 
-        // Mark initialised — prevents double-fetch on rapid checkout updates
-        $widget.removeData('loading');
+        // Mark initialised — remove HTML attribute so updated_checkout re-runs don't re-fetch
+        $widget.removeAttr('data-loading');
 
         $.ajax({
             url: orangepillCheckout.ajax_url,
@@ -48,82 +48,98 @@
                 }
             },
             error: function () {
-                // Silent failure — widget hidden, checkout unaffected
                 $widget.hide();
             },
         });
     }
 
     function renderWalletWidget($widget, wallet) {
-        var spendable = parseFloat(wallet.spendable_balance || wallet.balance || 0);
+        var spendable  = Math.floor(parseFloat(wallet.spendable_balance || wallet.balance || 0));
 
         if (spendable <= 0) {
             $widget.hide();
             return;
         }
 
-        var currency  = escapeHtml(wallet.currency || '');
-        var walletId  = escapeHtml(wallet.id || '');
-        var formatted = formatAmount(spendable, currency);
+        var cartTotal  = Math.floor(parseFloat(orangepillCheckout.cart_total || 0));
+        var maxApply   = cartTotal > 0 ? Math.min(spendable, cartTotal - 1) : spendable;
+        var currency   = wallet.currency || '';
+        var walletId   = wallet.id || '';
+        var storeCur   = orangepillCheckout.currency || '';
 
         var html =
             '<div class="op-wallet-widget">' +
             '<p class="op-wallet-label">' +
                 escapeHtml(orangepillCheckout.i18n.available_label) + ' ' +
-                '<strong>' + formatted + '</strong>' +
+                '<strong>' + formatInt(spendable, currency) + '</strong>' +
             '</p>' +
-            '<label class="op-wallet-toggle">' +
-                '<input type="checkbox" id="op-use-wallet" />' +
-                '<span>' + escapeHtml(orangepillCheckout.i18n.apply_label) + '</span>' +
-            '</label>' +
+            '<div class="op-wallet-slider-row">' +
+                '<input type="range" id="op-wallet-slider"' +
+                    ' min="0" max="' + maxApply + '" step="1" value="' + maxApply + '"' +
+                    ' style="flex:1;cursor:pointer;">' +
+                '<input type="number" id="op-wallet-input"' +
+                    ' min="0" max="' + maxApply + '" step="1" value="' + maxApply + '"' +
+                    ' style="width:90px;text-align:right;margin-left:10px;">' +
+                '<span style="margin-left:6px;white-space:nowrap;">' + escapeHtml(currency) + '</span>' +
+            '</div>' +
+            '<div id="op-wallet-preview"></div>' +
             '</div>';
 
         $widget.html(html).show();
 
-        // Store wallet_id so server skips a second API call
-        $('#orangepill_wallet_id').val(walletId);
+        // Store wallet_id
+        $('#orangepill_wallet_id').val(escapeHtml(walletId));
 
-        $('#op-use-wallet').on('change', function () {
-            if ($(this).is(':checked')) {
-                $('#orangepill_apply_wallet').val('1');
-                $('#orangepill_wallet_amount').val(spendable.toFixed(2));
-                showApplyPreview($widget, spendable, currency);
-            } else {
-                $('#orangepill_apply_wallet').val('0');
-                $('#orangepill_wallet_amount').val('');
-                $('#op-wallet-preview').remove();
-            }
+        var $slider = $('#op-wallet-slider');
+        var $input  = $('#op-wallet-input');
+
+        // Render initial preview with full amount
+        syncWallet(maxApply, currency, storeCur, cartTotal);
+
+        $slider.on('input change', function () {
+            var val = parseInt($(this).val(), 10);
+            $input.val(val);
+            syncWallet(val, currency, storeCur, cartTotal);
+        });
+
+        $input.on('input change', function () {
+            var val = Math.max(0, Math.min(maxApply, parseInt($(this).val(), 10) || 0));
+            $(this).val(val);
+            $slider.val(val);
+            syncWallet(val, currency, storeCur, cartTotal);
         });
     }
 
-    function showApplyPreview($widget, applying, currency) {
-        $('#op-wallet-preview').remove();
-
-        var cartTotal  = parseFloat(orangepillCheckout.cart_total || 0);
-        // Cap applying at order total (backend will enforce; this is UX hint only)
-        var applied    = Math.min(applying, cartTotal);
-        var remaining  = Math.max(0, cartTotal - applied);
-        var cur        = escapeHtml(currency);
-
-        var html =
-            '<p id="op-wallet-preview" class="op-wallet-preview">' +
-            escapeHtml(orangepillCheckout.i18n.applying_label) + ' <strong>' + formatAmount(applied, cur) + '</strong>' +
-            ' &nbsp;|&nbsp; ' +
-            escapeHtml(orangepillCheckout.i18n.remaining_label) + ' <strong>' + formatAmount(remaining, cur) + '</strong>' +
-            ' <em style="font-size:11px;color:#888;">*</em>' +
-            '</p>' +
-            '<p style="font-size:11px;color:#888;margin:2px 0 0 0;">* ' +
-            escapeHtml('Final amount determined by Orangepill') +
-            '</p>';
-
-        $widget.append(html);
+    function syncWallet(amount, walletCur, storeCur, cartTotal) {
+        if (amount > 0) {
+            $('#orangepill_apply_wallet').val('1');
+            $('#orangepill_wallet_amount').val(amount.toFixed(2));
+            updatePreview(amount, walletCur, storeCur, cartTotal);
+        } else {
+            $('#orangepill_apply_wallet').val('0');
+            $('#orangepill_wallet_amount').val('');
+            $('#op-wallet-preview').html('');
+        }
     }
 
-    function formatAmount(amount, currency) {
+    function updatePreview(applying, walletCur, storeCur, cartTotal) {
+        var remaining = Math.max(0, cartTotal - applying);
+        var html =
+            '<p class="op-wallet-preview" style="margin:8px 0 2px;">' +
+            escapeHtml(orangepillCheckout.i18n.applying_label) + ' <strong>' + formatInt(applying, walletCur) + '</strong>' +
+            ' &nbsp;|&nbsp; ' +
+            escapeHtml(orangepillCheckout.i18n.remaining_label) + ' <strong>' + formatInt(remaining, storeCur) + '</strong>' +
+            ' <em style="font-size:11px;color:#888;">*</em></p>' +
+            '<p style="font-size:11px;color:#888;margin:0;">* ' +
+            escapeHtml('Final amount determined by Orangepill') + '</p>';
+        $('#op-wallet-preview').html(html);
+    }
+
+    function formatInt(amount, currency) {
         return escapeHtml(
             new Intl.NumberFormat(undefined, {
                 minimumFractionDigits: 0,
-                maximumFractionDigits: 2,
+                maximumFractionDigits: 0,
             }).format(amount) + (currency ? ' ' + currency : '')
         );
     }

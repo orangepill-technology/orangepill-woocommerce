@@ -130,22 +130,18 @@ class OP_My_Account {
         echo '<table class="woocommerce-table shop_table">';
         echo '<thead><tr>';
         echo '<th>' . esc_html__('Wallet', 'orangepill-wc') . '</th>';
-        echo '<th>' . esc_html__('Balance', 'orangepill-wc') . '</th>';
         echo '<th>' . esc_html__('Available to spend', 'orangepill-wc') . '</th>';
-        echo '<th>' . esc_html__('Currency', 'orangepill-wc') . '</th>';
         echo '</tr></thead><tbody>';
 
         foreach ($wallets as $wallet) {
             $name      = $wallet['name'] ?? $wallet['type'] ?? __('Rewards', 'orangepill-wc');
-            $balance   = number_format((float) ($wallet['balance'] ?? 0), 0, ',', '.');
-            $spendable = number_format((float) ($wallet['spendable_balance'] ?? $wallet['balance'] ?? 0), 0, ',', '.');
+            $spendable = (float) ($wallet['spendable_balance'] ?? $wallet['balance'] ?? 0);
             $currency  = $wallet['currency'] ?? '';
+            $formatted = number_format($spendable, 0, ',', '.') . ($currency ? ' ' . $currency : '');
 
             echo '<tr>';
             echo '<td>' . esc_html($name) . '</td>';
-            echo '<td>' . esc_html($balance) . '</td>';
-            echo '<td>' . esc_html($spendable) . '</td>';
-            echo '<td>' . esc_html($currency) . '</td>';
+            echo '<td>' . esc_html($formatted) . '</td>';
             echo '</tr>';
         }
 
@@ -204,7 +200,7 @@ class OP_My_Account {
         foreach ($incentives as $item) {
             $date        = !empty($item['created_at']) ? date_i18n(get_option('date_format'), strtotime($item['created_at'])) : '—';
             $type        = $item['type'] ?? '—';
-            $description = $item['description'] ?? $item['reason'] ?? '—';
+            $description = $item['policy_name'] ?? $item['description'] ?? $item['reason'] ?? '—';
             $amount      = isset($item['amount']) ? number_format((float) $item['amount'], 0, ',', '.') : '—';
             $currency    = $item['currency'] ?? '';
             $status      = $item['status'] ?? '—';

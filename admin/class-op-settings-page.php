@@ -366,14 +366,40 @@ class OP_Settings_Page {
 
         update_option('woocommerce_orangepill_settings', array_merge($gateway->settings, $settings));
 
-        // Clear validation cache
-        delete_transient(self::VALIDATION_CACHE_KEY);
-
         OP_Logger::info(
             'settings_updated',
             'Orangepill settings updated',
             array('has_api_key' => !empty($settings['api_key']))
         );
+
+        // Auto-validate connection after save so status cards reflect current credentials.
+        if (!empty($settings['api_key']) && !empty($settings['integration_id'])) {
+            $api = new OP_API_Client();
+            $result = $api->validate_integration();
+
+            if (is_wp_error($result)) {
+                $validation_result = array(
+                    'success'   => false,
+                    'message'   => $result->get_error_message(),
+                    'timestamp' => current_time('timestamp'),
+                );
+                $warnings[] = sprintf(
+                    __('Connection test failed: %s', 'orangepill-wc'),
+                    $result->get_error_message()
+                );
+            } else {
+                $validation_result = array(
+                    'success'   => true,
+                    'message'   => __('Connection successful', 'orangepill-wc'),
+                    'timestamp' => current_time('timestamp'),
+                    'data'      => $result,
+                );
+            }
+
+            set_transient(self::VALIDATION_CACHE_KEY, $validation_result, self::VALIDATION_CACHE_TTL);
+        } else {
+            delete_transient(self::VALIDATION_CACHE_KEY);
+        }
 
         // Register/update integration-level webhook now that settings are saved.
         // PRIMARY delivery path — fires on every save so URL/event changes propagate.
