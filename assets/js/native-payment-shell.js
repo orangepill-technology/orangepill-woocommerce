@@ -23,6 +23,7 @@
 
     var state = {
         selectedMethodKey: null,
+        selectedChannel:   null,
         paymentOptions:    null,
         intentSubmitted:   false,
         isPlacing:         false,
@@ -64,7 +65,7 @@
             }
             state.isPlacing = true;
             setShellState('placing');
-            handlePayment();
+            handlePayment(state.selectedMethodKey, state.selectedChannel);
             return false;
         });
     }
@@ -76,6 +77,8 @@
         if (!$shell.length) return;
 
         stopPolling();
+        state.selectedMethodKey = null;
+        state.selectedChannel   = null;
         setShellState('loading');
 
         $.ajax({
@@ -106,14 +109,41 @@
         var eligible = options.filter(function (o) { return o.eligible; });
         if (!eligible.length) { setShellState('empty'); return; }
 
-        var html = '<div class="op-methods-list" role="radiogroup" aria-label="' + esc(i18n.select_method) + '">';
+        // Expand methods with multiple channels into one entry per channel.
+        // e.g., bank_transfer.bre_b with channels=['qr','reference'] → two rows.
+        var rows = [];
         eligible.forEach(function (method) {
-            var speedClass = method.estimatedSpeed ? ' op-speed-' + method.estimatedSpeed : '';
-            html += '<label class="op-method-item" data-method-key="' + esc(method.methodKey) + '">';
-            html += '<input type="radio" class="op-method-radio" name="op_method_key_ui" value="' + esc(method.methodKey) + '">';
-            html += '<span class="op-method-label">' + escHtml(method.label) + '</span>';
-            if (method.estimatedSpeed) {
-                html += '<span class="op-method-speed' + speedClass + '">' + escHtml(getSpeedLabel(method.estimatedSpeed)) + '</span>';
+            var channels = method.channels || [];
+            if (channels.length > 1) {
+                channels.forEach(function (ch) {
+                    rows.push({
+                        methodKey:     method.methodKey,
+                        channel:       ch,
+                        label:         method.label + ' (' + getChannelLabel(ch) + ')',
+                        estimatedSpeed: method.estimatedSpeed,
+                    });
+                });
+            } else {
+                rows.push({
+                    methodKey:     method.methodKey,
+                    channel:       channels.length === 1 ? channels[0] : null,
+                    label:         method.label,
+                    estimatedSpeed: method.estimatedSpeed,
+                });
+            }
+        });
+
+        var html = '<div class="op-methods-list" role="radiogroup" aria-label="' + esc(i18n.select_method) + '">';
+        rows.forEach(function (row, idx) {
+            var speedClass = row.estimatedSpeed ? ' op-speed-' + row.estimatedSpeed : '';
+            var channelAttr = row.channel ? ' data-channel="' + esc(row.channel) + '"' : '';
+            html += '<label class="op-method-item" data-method-key="' + esc(row.methodKey) + '"' + channelAttr + '>';
+            html += '<input type="radio" class="op-method-radio" name="op_method_key_ui"';
+            html += ' value="' + esc(row.methodKey) + '"';
+            html += ' data-channel="' + esc(row.channel || '') + '">';
+            html += '<span class="op-method-label">' + escHtml(row.label) + '</span>';
+            if (row.estimatedSpeed) {
+                html += '<span class="op-method-speed' + speedClass + '">' + escHtml(getSpeedLabel(row.estimatedSpeed)) + '</span>';
             }
             html += '</label>';
         });
@@ -125,10 +155,12 @@
         var $first = $shell.find('.op-method-radio').first();
         $first.prop('checked', true);
         state.selectedMethodKey = $first.val();
+        state.selectedChannel   = $first.data('channel') || null;
         $first.closest('.op-method-item').addClass('op-method-selected');
 
         $shell.on('change', '.op-method-radio', function () {
             state.selectedMethodKey = $(this).val();
+            state.selectedChannel   = $(this).data('channel') || null;
             $shell.find('.op-method-item').removeClass('op-method-selected');
             $(this).closest('.op-method-item').addClass('op-method-selected');
         });
@@ -136,7 +168,7 @@
 
     // ─── Payment execution ─────────────────────────────────────────────────────
 
-    function handlePayment() {
+    function handlePayment(methodKey, channel) {
         var $shell   = $('#orangepill-native-shell');
         var currency = $shell.data('currency');
         var amount   = $shell.data('amount');
@@ -149,7 +181,7 @@
             data: {
                 action:     'orangepill_create_intent',
                 nonce:      NONCE,
-                method_key: state.selectedMethodKey,
+                method_key: methodKey,
                 currency:   currency,
                 amount:     amount,
             },
@@ -158,24 +190,29 @@
                     handlePaymentError((response.data && response.data.message) || i18n.payment_error);
                     return;
                 }
-                executeIntent(response.data.intentId);
+                executeIntent(response.data.intentId, methodKey, channel);
             },
             error: function () { handlePaymentError(i18n.payment_error); },
         });
     }
 
-    function executeIntent(intentId) {
+    function executeIntent(intentId, methodKey, channel) {
         setShellState('placing', i18n.processing_payment);
+
+        var postData = {
+            action:     'orangepill_execute_intent',
+            nonce:      NONCE,
+            intent_id:  intentId,
+            method_key: methodKey,
+        };
+        if (channel) {
+            postData.channel = channel;
+        }
 
         $.ajax({
             url:    AJAX_URL,
             method: 'POST',
-            data: {
-                action:     'orangepill_execute_intent',
-                nonce:      NONCE,
-                intent_id:  intentId,
-                method_key: state.selectedMethodKey,
-            },
+            data:   postData,
             success: function (response) {
                 if (!response.success) {
                     handlePaymentError((response.data && response.data.message) || i18n.payment_error);
@@ -440,6 +477,16 @@
             unknown:  '',
         };
         return map[speed] || '';
+    }
+
+    function getChannelLabel(channel) {
+        var map = {
+            qr:        i18n.channel_qr        || 'QR',
+            reference: i18n.channel_reference || 'Llave Dinámica',
+            redirect:  'Redireccionado',
+            embedded:  'Integrado',
+        };
+        return map[channel] || channel;
     }
 
     function isOrangepillSelected() {

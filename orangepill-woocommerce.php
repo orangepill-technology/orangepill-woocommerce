@@ -346,6 +346,8 @@ function orangepill_wc_enqueue_checkout_assets() {
             'copy'               => __('Copiar', 'orangepill-wc'),
             'copied'             => __('Copiado', 'orangepill-wc'),
             'expires_in'         => __('Expira en', 'orangepill-wc'),
+            'channel_qr'         => __('QR', 'orangepill-wc'),
+            'channel_reference'  => __('Llave Dinámica', 'orangepill-wc'),
             'waiting_payment'    => __('Esperando confirmaci&oacute;n del pago...', 'orangepill-wc'),
             'payment_confirmed'  => __('&iexcl;Pago confirmado!', 'orangepill-wc'),
             'payment_expired'    => __('El tiempo para pagar ha expirado. Por favor intenta de nuevo.', 'orangepill-wc'),

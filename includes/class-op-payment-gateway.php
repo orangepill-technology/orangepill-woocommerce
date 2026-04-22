@@ -714,16 +714,20 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
 
         $intent_id  = isset($_POST['intent_id'])  ? sanitize_text_field($_POST['intent_id'])  : '';
         $method_key = isset($_POST['method_key']) ? sanitize_text_field($_POST['method_key']) : '';
+        $channel    = isset($_POST['channel'])    ? sanitize_text_field($_POST['channel'])    : '';
 
         if (empty($intent_id) || empty($method_key)) {
             wp_send_json_error(array('message' => 'intent_id and method_key are required'));
             return;
         }
 
+        $selection = array('methodKey' => $method_key);
+        if (!empty($channel)) {
+            $selection['channel'] = $channel;
+        }
+
         $api    = new OP_API_Client();
-        $result = $api->execute_payment_intent($intent_id, array(
-            'selection' => array('methodKey' => $method_key),
-        ));
+        $result = $api->execute_payment_intent($intent_id, array('selection' => $selection));
 
         if (is_wp_error($result)) {
             OP_Logger::error(
