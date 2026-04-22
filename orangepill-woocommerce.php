@@ -114,6 +114,11 @@ function orangepill_wc_init() {
     // Initialize payment gateway
     add_filter('woocommerce_payment_gateways', 'orangepill_wc_add_gateway');
 
+    // Native checkout AJAX proxies — registered here so they fire on every request,
+    // including wp-admin/admin-ajax.php where WC hasn't loaded gateways yet.
+    $native_gateway = new OP_Payment_Gateway();
+    $native_gateway->register_native_ajax_handlers();
+
     // Initialize admin menu and settings (AJAX handlers need to be registered globally)
     if (is_admin()) {
         $admin_menu = new OP_Admin_Menu();
@@ -327,10 +332,10 @@ function orangepill_wc_enqueue_checkout_assets() {
         'currency'   => get_woocommerce_currency(),
         'country'    => $default_country,
         'i18n'       => array(
-            'loading_options'    => __('Loading payment options\xe2\x80\xa6', 'orangepill-wc'),
+            'loading_options'    => __('Loading payment options...', 'orangepill-wc'),
             'select_method'      => __('Please select a payment method.', 'orangepill-wc'),
-            'creating_payment'   => __('Preparing payment\xe2\x80\xa6', 'orangepill-wc'),
-            'processing_payment' => __('Processing payment\xe2\x80\xa6', 'orangepill-wc'),
+            'creating_payment'   => __('Preparing payment...', 'orangepill-wc'),
+            'processing_payment' => __('Processing payment...', 'orangepill-wc'),
             'payment_error'      => __('Payment could not be processed. Please try again.', 'orangepill-wc'),
             'options_error'      => __('Unable to load payment options. Please refresh the page.', 'orangepill-wc'),
             'no_methods'         => __('No payment methods are available for this order.', 'orangepill-wc'),

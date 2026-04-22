@@ -36,16 +36,24 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
         $this->enabled     = $this->get_option('enabled');
 
         add_action('woocommerce_update_options_payment_gateways_' . $this->id, array($this, 'process_admin_options'));
+    }
 
-        // Native checkout AJAX proxy endpoints (PR-WC-NATIVE-CHECKOUT-1)
-        add_action('wp_ajax_orangepill_get_payment_options',  array($this, 'ajax_get_payment_options'));
+    /**
+     * Register native checkout AJAX proxy endpoints.
+     *
+     * Called explicitly from orangepill_wc_init() so the hooks are registered
+     * on every request — including AJAX requests where WC hasn't yet loaded
+     * payment gateways and the constructor would never run.
+     */
+    public function register_native_ajax_handlers() {
+        add_action('wp_ajax_orangepill_get_payment_options',        array($this, 'ajax_get_payment_options'));
         add_action('wp_ajax_nopriv_orangepill_get_payment_options', array($this, 'ajax_get_payment_options'));
-        add_action('wp_ajax_orangepill_create_intent',  array($this, 'ajax_create_intent'));
-        add_action('wp_ajax_nopriv_orangepill_create_intent',  array($this, 'ajax_create_intent'));
-        add_action('wp_ajax_orangepill_execute_intent', array($this, 'ajax_execute_intent'));
-        add_action('wp_ajax_nopriv_orangepill_execute_intent', array($this, 'ajax_execute_intent'));
-        add_action('wp_ajax_orangepill_get_intent_status', array($this, 'ajax_get_intent_status'));
-        add_action('wp_ajax_nopriv_orangepill_get_intent_status', array($this, 'ajax_get_intent_status'));
+        add_action('wp_ajax_orangepill_create_intent',              array($this, 'ajax_create_intent'));
+        add_action('wp_ajax_nopriv_orangepill_create_intent',       array($this, 'ajax_create_intent'));
+        add_action('wp_ajax_orangepill_execute_intent',             array($this, 'ajax_execute_intent'));
+        add_action('wp_ajax_nopriv_orangepill_execute_intent',      array($this, 'ajax_execute_intent'));
+        add_action('wp_ajax_orangepill_get_intent_status',          array($this, 'ajax_get_intent_status'));
+        add_action('wp_ajax_nopriv_orangepill_get_intent_status',   array($this, 'ajax_get_intent_status'));
     }
 
     /**
@@ -143,7 +151,7 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
             . ' data-amount="' . esc_attr((string) $cart_total) . '"'
             . ' data-country="' . esc_attr(substr(get_option('woocommerce_default_country', 'CO'), 0, 2)) . '">'
             . '<div class="op-native-loading">'
-            . esc_html__('Loading payment options\xe2\x80\xa6', 'orangepill-wc')
+            . esc_html__('Loading payment options...', 'orangepill-wc')
             . '</div>'
             . '</div>';
 
@@ -153,7 +161,7 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
 
         if (is_user_logged_in()) {
             echo '<div id="orangepill-wallet-widget" style="margin-top:12px;" data-loading="1">';
-            echo '<span class="op-wallet-loading">' . esc_html__('Checking rewards balance\xe2\x80\xa6', 'orangepill-wc') . '</span>';
+            echo '<span class="op-wallet-loading">' . esc_html__('Checking rewards balance...', 'orangepill-wc') . '</span>';
             echo '</div>';
             echo '<input type="hidden" name="orangepill_apply_wallet"  id="orangepill_apply_wallet"  value="0" />';
             echo '<input type="hidden" name="orangepill_wallet_amount" id="orangepill_wallet_amount" value="" />';
