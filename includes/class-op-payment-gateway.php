@@ -633,6 +633,37 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
             return;
         }
 
+        // Strip methods the checkout cannot execute without additional user input:
+        //  • requiresTokenization=true  → card token flow, no card form in this plugin yet
+        //  • requiredFields non-empty   → Nequi needs phone_number we don't collect yet
+        //  • bank_transfer.pse          → PSE requires doc type/number/bank code that the API
+        //                                 omits from requiredFields but Wompi validates at runtime
+        $pse_methods = array('bank_transfer.pse');
+        if (!empty($result['options'])) {
+            $filtered = array_filter($result['options'], function ($option) use ($pse_methods) {
+                if (!empty($option['requiresTokenization'])) {
+                    return false;
+                }
+                if (!empty($option['requiredFields'])) {
+                    return false;
+                }
+                if (in_array($option['methodKey'] ?? '', $pse_methods, true)) {
+                    return false;
+                }
+                return true;
+            });
+
+            // Put bank_transfer.bre_b first so it is auto-selected by the JS
+            usort($filtered, function ($a, $b) {
+                $priority = array('bank_transfer.bre_b' => 0);
+                $pa = $priority[$a['methodKey'] ?? ''] ?? 99;
+                $pb = $priority[$b['methodKey'] ?? ''] ?? 99;
+                return $pa - $pb;
+            });
+
+            $result['options'] = array_values($filtered);
+        }
+
         wp_send_json_success($result);
     }
 
