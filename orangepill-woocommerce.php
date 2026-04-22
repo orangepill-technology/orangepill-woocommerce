@@ -342,6 +342,15 @@ function orangepill_wc_enqueue_checkout_assets() {
             'speed_instant'      => __('Instant', 'orangepill-wc'),
             'speed_same_day'     => __('Same day', 'orangepill-wc'),
             'speed_next_day'     => __('Next day', 'orangepill-wc'),
+            'payment_key'        => __('Clave de pago', 'orangepill-wc'),
+            'copy'               => __('Copiar', 'orangepill-wc'),
+            'copied'             => __('Copiado', 'orangepill-wc'),
+            'expires_in'         => __('Expira en', 'orangepill-wc'),
+            'waiting_payment'    => __('Esperando confirmaci&oacute;n del pago...', 'orangepill-wc'),
+            'payment_confirmed'  => __('&iexcl;Pago confirmado!', 'orangepill-wc'),
+            'payment_expired'    => __('El tiempo para pagar ha expirado. Por favor intenta de nuevo.', 'orangepill-wc'),
+            'payment_failed'     => __('El pago no fue completado. Por favor intenta de nuevo.', 'orangepill-wc'),
+            'payment_timeout'    => __('Tiempo de espera agotado. Verifica tu email o intenta de nuevo.', 'orangepill-wc'),
         ),
     ));
 }

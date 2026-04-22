@@ -242,6 +242,32 @@ class OP_API_Client {
         return $this->request('GET', '/v4/payment-intents/' . rawurlencode($intent_id));
     }
 
+    /**
+     * Create payment request (BRE-B QR / dynamic key)
+     *
+     * @param string $payment_id  Payment UUID (same as intentId for native flow)
+     * @param string $mode        'dynamic_qr' or 'dynamic_key'
+     * @param int    $expiry_secs Seconds until expiry (default 300)
+     * @return array|WP_Error
+     */
+    public function create_payment_request($payment_id, $mode = 'dynamic_qr', $expiry_secs = 300) {
+        return $this->request('POST', '/v4/checkout/payment-requests', array(
+            'payment_id'     => $payment_id,
+            'mode'           => $mode,
+            'expiry_seconds' => $expiry_secs,
+        ));
+    }
+
+    /**
+     * Get payment status (lightweight polling endpoint)
+     *
+     * @param string $payment_id Payment UUID
+     * @return array|WP_Error { status: string }
+     */
+    public function get_payment_status($payment_id) {
+        return $this->request('GET', '/v4/payments/' . rawurlencode($payment_id) . '/status');
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
 
     /**

@@ -54,6 +54,8 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
         add_action('wp_ajax_nopriv_orangepill_execute_intent',      array($this, 'ajax_execute_intent'));
         add_action('wp_ajax_orangepill_get_intent_status',          array($this, 'ajax_get_intent_status'));
         add_action('wp_ajax_nopriv_orangepill_get_intent_status',   array($this, 'ajax_get_intent_status'));
+        add_action('wp_ajax_orangepill_get_payment_status',         array($this, 'ajax_get_payment_status'));
+        add_action('wp_ajax_nopriv_orangepill_get_payment_status',  array($this, 'ajax_get_payment_status'));
     }
 
     /**
@@ -558,33 +560,18 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
             return array('result' => 'success', 'redirect' => $redirect_url);
         }
 
+        // payment_request_required is handled inline by the JS (QR/key rendered on
+        // the checkout page + polling).  The form is only re-submitted once the JS
+        // poll sees status=succeeded, at which point execution_type becomes
+        // 'completed'.  If we somehow receive this value here it is stale.
         if ($execution_type === 'payment_request_required') {
-            $transient_key = 'op_exec_url_' . sanitize_key($intent_id);
-            $redirect_url  = get_transient($transient_key);
-            delete_transient($transient_key);
-
-            if (empty($redirect_url)) {
-                OP_Logger::error(
-                    'native_payment_request_url_missing',
-                    'No checkout UI URL found in transient for payment_request_required intent',
-                    array('order_id' => $order_id, 'intent_id' => $intent_id)
-                );
-                wc_add_notice(__('Unable to redirect to payment page. Please try again.', 'orangepill-wc'), 'error');
-                return array('result' => 'failure');
-            }
-
-            $order->update_status(
-                'pending',
-                __('Customer redirected to complete payment request.', 'orangepill-wc')
-            );
-
-            OP_Logger::info(
-                'native_payment_request_redirect',
-                'Order #' . $order_id . ' redirected to checkout UI for payment request',
+            OP_Logger::warning(
+                'native_payment_request_stale',
+                'process_payment received stale payment_request_required type — JS should have re-submitted with completed',
                 array('order_id' => $order_id, 'intent_id' => $intent_id)
             );
-
-            return array('result' => 'success', 'redirect' => $redirect_url);
+            wc_add_notice(__('Payment session expired. Please try again.', 'orangepill-wc'), 'error');
+            return array('result' => 'failure');
         }
 
         // Unknown execution type
@@ -761,21 +748,39 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
             );
         }
 
-        // payment_request_required: redirect to the hosted checkout UI so the
-        // user can complete the QR / dynamic-key flow there.
+        // payment_request_required: create the payment request (QR / dynamic key)
+        // server-side and return the rendering data to the JS so it can display
+        // the QR or key inline — no redirect to any external UI.
+        $payment_request_data = null;
         if ($exec_type === 'payment_request_required') {
-            $settings       = get_option('woocommerce_orangepill_settings', array());
-            $checkout_ui    = rtrim($settings['checkout_ui_url'] ?? '', '/');
-            $checkout_ui_redirect = $checkout_ui
-                ? $checkout_ui . '?intentId=' . rawurlencode($intent_id)
-                : '';
-            if ($checkout_ui_redirect) {
-                set_transient(
-                    'op_exec_url_' . sanitize_key($intent_id),
-                    $checkout_ui_redirect,
-                    15 * MINUTE_IN_SECONDS
+            $payment_id = $execution['paymentId'] ?? $intent_id;
+            $mode       = $execution['mode']      ?? 'dynamic_qr';
+
+            $pr = $api->create_payment_request($payment_id, $mode);
+
+            if (is_wp_error($pr)) {
+                OP_Logger::error(
+                    'native_payment_request_create_failed',
+                    'Failed to create payment request: ' . $pr->get_error_message(),
+                    array('intent_id' => $intent_id, 'payment_id' => $payment_id, 'mode' => $mode)
                 );
+                wp_send_json_error(array('message' => __('Unable to generate payment request. Please try again.', 'orangepill-wc')));
+                return;
             }
+
+            $payment_request_data = array(
+                'payment_request_id' => $pr['payment_request_id'] ?? '',
+                'payment_id'         => $pr['payment_id']         ?? $payment_id,
+                'mode'               => $pr['mode']               ?? $mode,
+                'expires_at'         => $pr['expires_at']         ?? null,
+                'rendering'          => $pr['rendering']          ?? array(),
+            );
+
+            OP_Logger::info(
+                'native_payment_request_created',
+                'Payment request created (mode: ' . $mode . ')',
+                array('intent_id' => $intent_id, 'payment_id' => $payment_id, 'mode' => $mode)
+            );
         }
 
         OP_Logger::info(
@@ -784,13 +789,18 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
             array('intent_id' => $intent_id, 'exec_type' => $exec_type)
         );
 
-        wp_send_json_success(array(
+        $response = array(
             'intentId'       => $result['intentId'] ?? $intent_id,
             'status'         => $result['status']   ?? '',
             'execution_type' => $exec_type,
-            // Send a flag, not the URL — URL is securely stored in transient
-            'has_redirect'   => in_array($exec_type, array('redirect', 'payment_request_required'), true),
-        ));
+            'has_redirect'   => $exec_type === 'redirect' && !empty($exec_url),
+        );
+
+        if ($payment_request_data !== null) {
+            $response['payment_request'] = $payment_request_data;
+        }
+
+        wp_send_json_success($response);
     }
 
     /**
@@ -817,6 +827,33 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
         wp_send_json_success(array(
             'intentId' => $result['id']     ?? $intent_id,
             'status'   => $result['status'] ?? '',
+        ));
+    }
+
+    /**
+     * AJAX: GET /v4/payments/:id/status — lightweight polling for QR/key screens.
+     */
+    public function ajax_get_payment_status() {
+        check_ajax_referer('orangepill_wc_checkout', 'nonce');
+
+        $payment_id = isset($_POST['payment_id']) ? sanitize_text_field($_POST['payment_id']) : '';
+
+        if (empty($payment_id)) {
+            wp_send_json_error(array('message' => 'payment_id is required'));
+            return;
+        }
+
+        $api    = new OP_API_Client();
+        $result = $api->get_payment_status($payment_id);
+
+        if (is_wp_error($result)) {
+            wp_send_json_error(array('message' => $result->get_error_message()));
+            return;
+        }
+
+        wp_send_json_success(array(
+            'paymentId' => $payment_id,
+            'status'    => $result['status'] ?? '',
         ));
     }
 

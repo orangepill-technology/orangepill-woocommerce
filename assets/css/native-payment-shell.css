@@ -131,3 +131,121 @@
     font-size: 0.9em;
     font-style: italic;
 }
+
+/* ─── Payment request (QR / dynamic key) ───────────────────────────── */
+
+.op-payment-request {
+    margin-top: 14px;
+    padding: 16px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    background: #fafafa;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+/* QR image */
+
+.op-pr-qr {
+    display: flex;
+    justify-content: center;
+}
+
+.op-qr-image {
+    width: 200px;
+    height: 200px;
+    border: 1px solid #eee;
+    border-radius: 6px;
+    background: #fff;
+    display: block;
+}
+
+/* Dynamic key */
+
+.op-pr-key {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.op-pr-key-label {
+    font-size: 0.8em;
+    color: #666;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.op-pr-key-value-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.op-pr-key-value {
+    font-size: 1.25em;
+    font-weight: 700;
+    font-family: monospace;
+    letter-spacing: 0.08em;
+    color: #1d2327;
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    padding: 6px 12px;
+    flex: 1;
+    text-align: center;
+}
+
+.op-copy-btn {
+    background: #2271b1;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    padding: 6px 14px;
+    font-size: 0.85em;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.15s;
+}
+
+.op-copy-btn:hover {
+    background: #135e96;
+}
+
+.op-pr-instructions {
+    font-size: 0.85em;
+    color: #555;
+    margin: 0;
+}
+
+/* Expiry countdown */
+
+.op-pr-expiry {
+    font-size: 0.85em;
+    color: #666;
+    text-align: center;
+}
+
+.op-pr-expiry-countdown {
+    font-weight: 700;
+    font-family: monospace;
+    color: #c0392b;
+}
+
+/* Waiting / success indicator */
+
+.op-pr-waiting {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    font-size: 0.9em;
+    color: #555;
+    padding: 4px 0;
+}
+
+.op-pr-success-icon {
+    color: #27ae60;
+    font-size: 1.2em;
+    font-weight: 700;
+}
