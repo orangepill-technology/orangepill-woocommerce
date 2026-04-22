@@ -558,7 +558,36 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
             return array('result' => 'success', 'redirect' => $redirect_url);
         }
 
-        // payment_request_required or unknown
+        if ($execution_type === 'payment_request_required') {
+            $transient_key = 'op_exec_url_' . sanitize_key($intent_id);
+            $redirect_url  = get_transient($transient_key);
+            delete_transient($transient_key);
+
+            if (empty($redirect_url)) {
+                OP_Logger::error(
+                    'native_payment_request_url_missing',
+                    'No checkout UI URL found in transient for payment_request_required intent',
+                    array('order_id' => $order_id, 'intent_id' => $intent_id)
+                );
+                wc_add_notice(__('Unable to redirect to payment page. Please try again.', 'orangepill-wc'), 'error');
+                return array('result' => 'failure');
+            }
+
+            $order->update_status(
+                'pending',
+                __('Customer redirected to complete payment request.', 'orangepill-wc')
+            );
+
+            OP_Logger::info(
+                'native_payment_request_redirect',
+                'Order #' . $order_id . ' redirected to checkout UI for payment request',
+                array('order_id' => $order_id, 'intent_id' => $intent_id)
+            );
+
+            return array('result' => 'success', 'redirect' => $redirect_url);
+        }
+
+        // Unknown execution type
         OP_Logger::warning(
             'native_payment_unsupported_type',
             'Unsupported native execution type: ' . $execution_type,
@@ -637,7 +666,7 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
         $body = array(
             'amount'         => $amount,
             'currency'       => $currency,
-            'productKey'     => 'checkout',
+            'productKey'     => $method_key,
             'idempotencyKey' => $idempotency_key,
             'metadata'       => array(
                 '_selectedMethodKey' => $method_key,
@@ -732,6 +761,23 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
             );
         }
 
+        // payment_request_required: redirect to the hosted checkout UI so the
+        // user can complete the QR / dynamic-key flow there.
+        if ($exec_type === 'payment_request_required') {
+            $settings       = get_option('woocommerce_orangepill_settings', array());
+            $checkout_ui    = rtrim($settings['checkout_ui_url'] ?? '', '/');
+            $checkout_ui_redirect = $checkout_ui
+                ? $checkout_ui . '?intentId=' . rawurlencode($intent_id)
+                : '';
+            if ($checkout_ui_redirect) {
+                set_transient(
+                    'op_exec_url_' . sanitize_key($intent_id),
+                    $checkout_ui_redirect,
+                    15 * MINUTE_IN_SECONDS
+                );
+            }
+        }
+
         OP_Logger::info(
             'native_intent_executed',
             'Payment intent executed (type: ' . $exec_type . ')',
@@ -743,7 +789,7 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
             'status'         => $result['status']   ?? '',
             'execution_type' => $exec_type,
             // Send a flag, not the URL — URL is securely stored in transient
-            'has_redirect'   => $exec_type === 'redirect' && !empty($exec_url),
+            'has_redirect'   => in_array($exec_type, array('redirect', 'payment_request_required'), true),
         ));
     }
 
