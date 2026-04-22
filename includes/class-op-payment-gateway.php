@@ -24,7 +24,7 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
     public function __construct() {
         $this->id                 = 'orangepill';
         $this->icon               = '';
-        $this->has_fields         = true; // We render the wallet widget
+        $this->has_fields         = true;
         $this->method_title       = __('Orangepill', 'orangepill-wc');
         $this->method_description = __('Accept payments via Orangepill embedded finance platform', 'orangepill-wc');
 
@@ -36,6 +36,16 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
         $this->enabled     = $this->get_option('enabled');
 
         add_action('woocommerce_update_options_payment_gateways_' . $this->id, array($this, 'process_admin_options'));
+
+        // Native checkout AJAX proxy endpoints (PR-WC-NATIVE-CHECKOUT-1)
+        add_action('wp_ajax_orangepill_get_payment_options',  array($this, 'ajax_get_payment_options'));
+        add_action('wp_ajax_nopriv_orangepill_get_payment_options', array($this, 'ajax_get_payment_options'));
+        add_action('wp_ajax_orangepill_create_intent',  array($this, 'ajax_create_intent'));
+        add_action('wp_ajax_nopriv_orangepill_create_intent',  array($this, 'ajax_create_intent'));
+        add_action('wp_ajax_orangepill_execute_intent', array($this, 'ajax_execute_intent'));
+        add_action('wp_ajax_nopriv_orangepill_execute_intent', array($this, 'ajax_execute_intent'));
+        add_action('wp_ajax_orangepill_get_intent_status', array($this, 'ajax_get_intent_status'));
+        add_action('wp_ajax_nopriv_orangepill_get_intent_status', array($this, 'ajax_get_intent_status'));
     }
 
     /**
@@ -113,24 +123,38 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
     }
 
     /**
-     * Render rewards wallet widget on checkout page (Part 1 — PR-WC-CHECKOUT-WALLET-UX-1)
+     * Render native payment shell + optional wallet widget.
      *
-     * Outputs the widget container populated by checkout.js via AJAX. Three hidden
-     * fields carry the customer's opt-in decision into process_payment():
-     *   orangepill_apply_wallet  — "1" if customer checked the box
-     *   orangepill_wallet_amount — full spendable balance (verbatim from API, never computed here)
-     *   orangepill_wallet_id     — wallet ID so server skips a second API call
+     * Native shell (PR-WC-NATIVE-CHECKOUT-1): fetches payment options via AJAX,
+     * renders method list, drives create_intent → execute_intent, then submits
+     * the WC form with hidden intent fields for process_payment().
+     *
+     * Wallet widget (PR-WC-CHECKOUT-WALLET-UX-1): only shown for logged-in users.
      */
     public function payment_fields() {
         if ($this->description) {
             echo wp_kses_post(wpautop(wptexturize($this->description)));
         }
 
+        // Native payment shell — populated by native-payment-shell.js
+        $cart_total = WC()->cart ? (float) WC()->cart->get_total('edit') : 0.0;
+        echo '<div id="orangepill-native-shell"'
+            . ' data-currency="' . esc_attr(get_woocommerce_currency()) . '"'
+            . ' data-amount="' . esc_attr((string) $cart_total) . '"'
+            . ' data-country="' . esc_attr(substr(get_option('woocommerce_default_country', 'CO'), 0, 2)) . '">'
+            . '<div class="op-native-loading">'
+            . esc_html__('Loading payment options\xe2\x80\xa6', 'orangepill-wc')
+            . '</div>'
+            . '</div>';
+
+        // Hidden fields written by native-payment-shell.js; read by process_payment()
+        echo '<input type="hidden" name="_orangepill_intent_id"       id="op_intent_id"       value="" />';
+        echo '<input type="hidden" name="_orangepill_execution_type"  id="op_execution_type"  value="" />';
+
         if (is_user_logged_in()) {
             echo '<div id="orangepill-wallet-widget" style="margin-top:12px;" data-loading="1">';
             echo '<span class="op-wallet-loading">' . esc_html__('Checking rewards balance\xe2\x80\xa6', 'orangepill-wc') . '</span>';
             echo '</div>';
-            // Values written by checkout.js; read by process_payment()
             echo '<input type="hidden" name="orangepill_apply_wallet"  id="orangepill_apply_wallet"  value="0" />';
             echo '<input type="hidden" name="orangepill_wallet_amount" id="orangepill_wallet_amount" value="" />';
             echo '<input type="hidden" name="orangepill_wallet_id"     id="orangepill_wallet_id"     value="" />';
@@ -140,12 +164,14 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
     /**
      * Process payment
      *
-     * Flow:
-     * 1. Get/create Orangepill customer (logged-in users only)
-     * 2. Store channel on order meta (_orangepill_channel = 'web')
-     * 3. Create checkout session via POST /v4/checkout/sessions
-     * 4. Apply wallet balance if customer opted in (Part 4)
-     * 5. Redirect to hosted checkout UI
+     * Two paths:
+     *
+     * [A] Native checkout (PR-WC-NATIVE-CHECKOUT-1): JS has already created and
+     *     executed the intent. process_payment() verifies via API and finalises
+     *     the order. Hidden field _orangepill_intent_id triggers this path.
+     *
+     * [B] Hosted checkout (legacy): creates a session and redirects to the
+     *     Orangepill hosted checkout UI.
      *
      * @param int $order_id WooCommerce order ID
      * @return array Result array (success/failure + redirect URL)
@@ -158,6 +184,16 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
             return array('result' => 'failure');
         }
 
+        // ── Path A: native intent already executed by JS ──────────────────
+        $intent_id = isset($_POST['_orangepill_intent_id'])
+            ? sanitize_text_field($_POST['_orangepill_intent_id'])
+            : '';
+
+        if (!empty($intent_id)) {
+            return $this->process_native_payment($order, $intent_id);
+        }
+
+        // ── Path B: legacy hosted-checkout flow ───────────────────────────
         try {
             // ─── Part 2: Channel propagation ───────────────────────────────
             $order->update_meta_data('_orangepill_channel', 'web');
@@ -401,6 +437,336 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
             return array('result' => 'failure');
         }
     }
+
+    // ─── Native checkout helpers (PR-WC-NATIVE-CHECKOUT-1) ───────────────────
+
+    /**
+     * Finalise an order where the payment intent was already created + executed
+     * by the JS shell. Verifies status server-side via API.
+     *
+     * @param WC_Order $order
+     * @param string   $intent_id
+     * @return array WC process_payment result
+     */
+    private function process_native_payment($order, $intent_id) {
+        $order_id      = $order->get_id();
+        $execution_type = isset($_POST['_orangepill_execution_type'])
+            ? sanitize_text_field($_POST['_orangepill_execution_type'])
+            : '';
+
+        // Persist intent_id on order immediately so return handler can look it up
+        $order->update_meta_data('_orangepill_intent_id', $intent_id);
+        $order->update_meta_data('_orangepill_channel', 'web');
+        $order->save();
+
+        // Store in session as backup for return handler
+        if (WC()->session) {
+            WC()->session->set('op_native_intent_id', $intent_id);
+        }
+
+        $api = new OP_API_Client();
+
+        if ($execution_type === 'completed') {
+            $intent = $api->get_payment_intent($intent_id);
+
+            if (is_wp_error($intent)) {
+                OP_Logger::error(
+                    'native_intent_verify_failed',
+                    'Failed to verify completed intent: ' . $intent->get_error_message(),
+                    array('order_id' => $order_id, 'intent_id' => $intent_id)
+                );
+                wc_add_notice(__('Unable to verify payment. Please try again.', 'orangepill-wc'), 'error');
+                return array('result' => 'failure');
+            }
+
+            $status = $intent['status'] ?? '';
+
+            if ($status === 'succeeded') {
+                $order->update_meta_data('_orangepill_payment_status', 'succeeded');
+                $order->update_meta_data('_orangepill_payment_confirmed_at', current_time('mysql'));
+                $order->save();
+                $order->payment_complete($intent_id);
+
+                OP_Logger::info(
+                    'native_payment_completed',
+                    'Order #' . $order_id . ' completed via native checkout',
+                    array('order_id' => $order_id, 'intent_id' => $intent_id)
+                );
+
+                return array('result' => 'success', 'redirect' => $this->get_return_url($order));
+            }
+
+            OP_Logger::error(
+                'native_payment_unexpected_status',
+                'Intent status not succeeded after completed execution: ' . $status,
+                array('order_id' => $order_id, 'intent_id' => $intent_id, 'status' => $status)
+            );
+            wc_add_notice(__('Payment was not completed. Please try again.', 'orangepill-wc'), 'error');
+            return array('result' => 'failure');
+        }
+
+        if ($execution_type === 'processing') {
+            $order->update_status(
+                'on-hold',
+                __('Payment submitted and awaiting confirmation from provider.', 'orangepill-wc')
+            );
+
+            OP_Logger::info(
+                'native_payment_processing',
+                'Order #' . $order_id . ' awaiting async confirmation',
+                array('order_id' => $order_id, 'intent_id' => $intent_id)
+            );
+
+            return array('result' => 'success', 'redirect' => $this->get_return_url($order));
+        }
+
+        if ($execution_type === 'redirect') {
+            // Redirect URL was stored in a transient by the AJAX execute handler
+            $transient_key = 'op_exec_url_' . sanitize_key($intent_id);
+            $redirect_url  = get_transient($transient_key);
+            delete_transient($transient_key);
+
+            if (empty($redirect_url)) {
+                OP_Logger::error(
+                    'native_redirect_url_missing',
+                    'No execution redirect URL found in transient for intent',
+                    array('order_id' => $order_id, 'intent_id' => $intent_id)
+                );
+                wc_add_notice(__('Unable to redirect to payment page. Please try again.', 'orangepill-wc'), 'error');
+                return array('result' => 'failure');
+            }
+
+            $order->update_status(
+                'pending',
+                __('Customer redirected to complete payment.', 'orangepill-wc')
+            );
+
+            OP_Logger::info(
+                'native_payment_redirect',
+                'Order #' . $order_id . ' redirected to provider for payment',
+                array('order_id' => $order_id, 'intent_id' => $intent_id)
+            );
+
+            return array('result' => 'success', 'redirect' => $redirect_url);
+        }
+
+        // payment_request_required or unknown
+        OP_Logger::warning(
+            'native_payment_unsupported_type',
+            'Unsupported native execution type: ' . $execution_type,
+            array('order_id' => $order_id, 'intent_id' => $intent_id, 'type' => $execution_type)
+        );
+        wc_add_notice(__('This payment method requires additional steps. Please choose another method.', 'orangepill-wc'), 'error');
+        return array('result' => 'failure');
+    }
+
+    // ─── AJAX proxy handlers ──────────────────────────────────────────────────
+
+    /**
+     * AJAX: GET /v4/payment-options
+     */
+    public function ajax_get_payment_options() {
+        check_ajax_referer('orangepill_wc_checkout', 'nonce');
+
+        $currency = isset($_POST['currency']) ? strtoupper(sanitize_text_field($_POST['currency'])) : '';
+        $amount   = isset($_POST['amount'])   ? (float) $_POST['amount'] : null;
+        $country  = isset($_POST['country'])  ? strtoupper(sanitize_text_field($_POST['country'])) : null;
+
+        if (empty($currency)) {
+            wp_send_json_error(array('message' => 'currency is required'));
+            return;
+        }
+
+        $params = array_filter(array(
+            'currency' => $currency,
+            'amount'   => $amount > 0 ? $amount : null,
+            'country'  => $country ?: null,
+        ), function ($v) { return $v !== null; });
+
+        $api    = new OP_API_Client();
+        $result = $api->get_payment_options($params);
+
+        if (is_wp_error($result)) {
+            OP_Logger::warning(
+                'native_get_options_failed',
+                'Failed to fetch payment options: ' . $result->get_error_message(),
+                array('currency' => $currency)
+            );
+            wp_send_json_error(array('message' => $result->get_error_message()));
+            return;
+        }
+
+        wp_send_json_success($result);
+    }
+
+    /**
+     * AJAX: POST /v4/payment-intents
+     */
+    public function ajax_create_intent() {
+        check_ajax_referer('orangepill_wc_checkout', 'nonce');
+
+        $method_key = isset($_POST['method_key']) ? sanitize_text_field($_POST['method_key']) : '';
+        $currency   = isset($_POST['currency'])   ? strtoupper(sanitize_text_field($_POST['currency'])) : '';
+        $amount     = isset($_POST['amount'])     ? (float) $_POST['amount'] : 0.0;
+
+        if (empty($method_key) || empty($currency) || $amount <= 0) {
+            wp_send_json_error(array('message' => 'method_key, currency and amount are required'));
+            return;
+        }
+
+        $settings      = get_option('woocommerce_orangepill_settings', array());
+        $merchant_id   = $settings['merchant_id'] ?? '';
+        $return_url    = home_url('/?wc-api=orangepill-native-return');
+
+        $customer_id = null;
+        if (is_user_logged_in()) {
+            $user_id     = get_current_user_id();
+            $customer_id = get_user_meta($user_id, '_orangepill_customer_id', true) ?: null;
+        }
+
+        $idempotency_key = wp_generate_password(32, false);
+
+        $body = array(
+            'amount'         => $amount,
+            'currency'       => $currency,
+            'productKey'     => 'checkout',
+            'idempotencyKey' => $idempotency_key,
+            'metadata'       => array(
+                '_selectedMethodKey' => $method_key,
+                'channel'            => 'woocommerce',
+            ),
+            'experience' => array(
+                'type'      => 'two_step',
+                'returnUrl' => $return_url,
+            ),
+        );
+
+        if (!empty($merchant_id)) {
+            $body['merchantId'] = $merchant_id;
+        }
+        if ($customer_id) {
+            $body['customerId'] = $customer_id;
+        }
+
+        $api    = new OP_API_Client();
+        $result = $api->create_payment_intent($body);
+
+        if (is_wp_error($result)) {
+            OP_Logger::error(
+                'native_create_intent_failed',
+                'Failed to create payment intent: ' . $result->get_error_message(),
+                array('method_key' => $method_key, 'currency' => $currency)
+            );
+            wp_send_json_error(array('message' => $result->get_error_message()));
+            return;
+        }
+
+        $intent_id = $result['id'] ?? '';
+        if (empty($intent_id)) {
+            wp_send_json_error(array('message' => 'API returned no intent id'));
+            return;
+        }
+
+        OP_Logger::info(
+            'native_intent_created',
+            'Payment intent created',
+            array('intent_id' => $intent_id, 'method_key' => $method_key)
+        );
+
+        wp_send_json_success(array(
+            'intentId' => $intent_id,
+            'status'   => $result['status'] ?? '',
+        ));
+    }
+
+    /**
+     * AJAX: POST /v4/payment-intents/:id/execute
+     *
+     * Stores redirect URL in a transient so process_payment() can use it
+     * without trusting browser-submitted data.
+     */
+    public function ajax_execute_intent() {
+        check_ajax_referer('orangepill_wc_checkout', 'nonce');
+
+        $intent_id  = isset($_POST['intent_id'])  ? sanitize_text_field($_POST['intent_id'])  : '';
+        $method_key = isset($_POST['method_key']) ? sanitize_text_field($_POST['method_key']) : '';
+
+        if (empty($intent_id) || empty($method_key)) {
+            wp_send_json_error(array('message' => 'intent_id and method_key are required'));
+            return;
+        }
+
+        $api    = new OP_API_Client();
+        $result = $api->execute_payment_intent($intent_id, array(
+            'selection' => array('methodKey' => $method_key),
+        ));
+
+        if (is_wp_error($result)) {
+            OP_Logger::error(
+                'native_execute_intent_failed',
+                'Failed to execute payment intent: ' . $result->get_error_message(),
+                array('intent_id' => $intent_id, 'method_key' => $method_key)
+            );
+            wp_send_json_error(array('message' => $result->get_error_message()));
+            return;
+        }
+
+        $execution  = $result['execution'] ?? array();
+        $exec_type  = $execution['type']   ?? '';
+        $exec_url   = $execution['url']    ?? '';
+
+        // Store redirect URL server-side for secure use in process_payment()
+        if ($exec_type === 'redirect' && !empty($exec_url)) {
+            set_transient(
+                'op_exec_url_' . sanitize_key($intent_id),
+                $exec_url,
+                15 * MINUTE_IN_SECONDS
+            );
+        }
+
+        OP_Logger::info(
+            'native_intent_executed',
+            'Payment intent executed (type: ' . $exec_type . ')',
+            array('intent_id' => $intent_id, 'exec_type' => $exec_type)
+        );
+
+        wp_send_json_success(array(
+            'intentId'       => $result['intentId'] ?? $intent_id,
+            'status'         => $result['status']   ?? '',
+            'execution_type' => $exec_type,
+            // Send a flag, not the URL — URL is securely stored in transient
+            'has_redirect'   => $exec_type === 'redirect' && !empty($exec_url),
+        ));
+    }
+
+    /**
+     * AJAX: GET /v4/payment-intents/:id — for polling / status check.
+     */
+    public function ajax_get_intent_status() {
+        check_ajax_referer('orangepill_wc_checkout', 'nonce');
+
+        $intent_id = isset($_POST['intent_id']) ? sanitize_text_field($_POST['intent_id']) : '';
+
+        if (empty($intent_id)) {
+            wp_send_json_error(array('message' => 'intent_id is required'));
+            return;
+        }
+
+        $api    = new OP_API_Client();
+        $result = $api->get_payment_intent($intent_id);
+
+        if (is_wp_error($result)) {
+            wp_send_json_error(array('message' => $result->get_error_message()));
+            return;
+        }
+
+        wp_send_json_success(array(
+            'intentId' => $result['id']     ?? $intent_id,
+            'status'   => $result['status'] ?? '',
+        ));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
 
     /**
      * @deprecated PR-WC-INTEGRATION-WEBHOOKS-1

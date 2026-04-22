@@ -3,7 +3,7 @@
  * Plugin Name: Orangepill for WooCommerce
  * Plugin URI: https://github.com/orangepill-technology/orangepill-woocommerce
  * Description: Accept payments via Orangepill - embedded finance infrastructure for modern commerce platforms
- * Version: 1.3.0
+ * Version: 1.4.0
  * Author: Orangepill
  * Author URI: https://orangepill.technology
  * License: GPL-2.0+
@@ -22,7 +22,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('ORANGEPILL_WC_VERSION', '1.3.0');
+define('ORANGEPILL_WC_VERSION', '1.4.0');
 define('ORANGEPILL_WC_PLUGIN_FILE', __FILE__);
 define('ORANGEPILL_WC_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ORANGEPILL_WC_PLUGIN_URL', plugin_dir_url(__FILE__));
@@ -133,6 +133,10 @@ function orangepill_wc_init() {
     // [PR-WC-EXTERNAL-ORDERS-SYNC-1] Push all orders to external-orders API (fire-and-forget)
     $external_order_sync = new OP_External_Order_Sync();
     $external_order_sync->init();
+
+    // [PR-WC-NATIVE-CHECKOUT-1] Return handler for 3DS / provider redirects
+    $return_handler = new OP_Checkout_Return_Handler();
+    $return_handler->init();
 
     // [PR-OP-WOO-INTEGRATION-CORE-1] My Account loyalty + rewards pages
     $my_account = new OP_My_Account();
@@ -262,15 +266,14 @@ function orangepill_wc_mark_paid() {
 }
 
 /**
- * Enqueue frontend checkout assets (wallet widget)
- *
- * PR-OP-WOO-INTEGRATION-CORE-1 Part 4
+ * Enqueue frontend checkout assets (native shell + wallet widget)
  */
 function orangepill_wc_enqueue_checkout_assets() {
     if (!is_checkout()) {
         return;
     }
 
+    // Wallet widget (PR-OP-WOO-INTEGRATION-CORE-1 Part 4)
     wp_enqueue_style(
         'orangepill-wc-checkout',
         ORANGEPILL_WC_PLUGIN_URL . 'assets/css/checkout.css',
@@ -296,6 +299,44 @@ function orangepill_wc_enqueue_checkout_assets() {
             'apply_label'     => __('Apply rewards balance to this purchase', 'orangepill-wc'),
             'applying_label'  => __('Applying:', 'orangepill-wc'),
             'remaining_label' => __('Estimated remaining to pay:', 'orangepill-wc'),
+        ),
+    ));
+
+    // Native payment shell (PR-WC-NATIVE-CHECKOUT-1)
+    wp_enqueue_style(
+        'orangepill-wc-native-shell',
+        ORANGEPILL_WC_PLUGIN_URL . 'assets/css/native-payment-shell.css',
+        array(),
+        ORANGEPILL_WC_VERSION
+    );
+
+    wp_enqueue_script(
+        'orangepill-wc-native-shell',
+        ORANGEPILL_WC_PLUGIN_URL . 'assets/js/native-payment-shell.js',
+        array('jquery'),
+        ORANGEPILL_WC_VERSION,
+        true
+    );
+
+    $default_country = substr(get_option('woocommerce_default_country', 'CO'), 0, 2);
+
+    wp_localize_script('orangepill-wc-native-shell', 'orangepillNative', array(
+        'ajax_url'   => admin_url('admin-ajax.php'),
+        'nonce'      => wp_create_nonce('orangepill_wc_checkout'),
+        'cart_total' => (string) WC()->cart->get_total('edit'),
+        'currency'   => get_woocommerce_currency(),
+        'country'    => $default_country,
+        'i18n'       => array(
+            'loading_options'    => __('Loading payment options\xe2\x80\xa6', 'orangepill-wc'),
+            'select_method'      => __('Please select a payment method.', 'orangepill-wc'),
+            'creating_payment'   => __('Preparing payment\xe2\x80\xa6', 'orangepill-wc'),
+            'processing_payment' => __('Processing payment\xe2\x80\xa6', 'orangepill-wc'),
+            'payment_error'      => __('Payment could not be processed. Please try again.', 'orangepill-wc'),
+            'options_error'      => __('Unable to load payment options. Please refresh the page.', 'orangepill-wc'),
+            'no_methods'         => __('No payment methods are available for this order.', 'orangepill-wc'),
+            'speed_instant'      => __('Instant', 'orangepill-wc'),
+            'speed_same_day'     => __('Same day', 'orangepill-wc'),
+            'speed_next_day'     => __('Next day', 'orangepill-wc'),
         ),
     ));
 }

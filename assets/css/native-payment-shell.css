@@ -1,0 +1,133 @@
+/**
+ * Orangepill Native Payment Shell (PR-WC-NATIVE-CHECKOUT-1)
+ */
+
+#orangepill-native-shell {
+    margin-top: 12px;
+    position: relative;
+    min-height: 48px;
+}
+
+/* ─── Loading state ─────────────────────────────────────────────────── */
+
+.op-native-loading {
+    color: #666;
+    font-size: 0.9em;
+    padding: 8px 0;
+}
+
+/* ─── Method list ───────────────────────────────────────────────────── */
+
+.op-methods-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.op-method-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+    background: #fff;
+    font-weight: normal;
+    user-select: none;
+}
+
+.op-method-item:hover {
+    border-color: #999;
+    background: #fafafa;
+}
+
+.op-method-item.op-method-selected {
+    border-color: #2271b1;
+    background: #f0f6fc;
+}
+
+.op-method-radio {
+    flex-shrink: 0;
+    margin: 0;
+    accent-color: #2271b1;
+}
+
+.op-method-label {
+    flex: 1;
+    font-size: 0.95em;
+    color: #1d2327;
+}
+
+/* ─── Speed badge ───────────────────────────────────────────────────── */
+
+.op-method-speed {
+    font-size: 0.75em;
+    padding: 2px 7px;
+    border-radius: 10px;
+    background: #e9eff5;
+    color: #555;
+    white-space: nowrap;
+}
+
+.op-method-speed.op-speed-instant {
+    background: #d4edda;
+    color: #155724;
+}
+
+.op-method-speed.op-speed-same_day {
+    background: #fff3cd;
+    color: #856404;
+}
+
+.op-method-speed.op-speed-next_day {
+    background: #d1ecf1;
+    color: #0c5460;
+}
+
+/* ─── Placing overlay ───────────────────────────────────────────────── */
+
+.op-placing-overlay {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 0;
+    color: #555;
+    font-size: 0.9em;
+}
+
+.op-spinner {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border: 2px solid #ccc;
+    border-top-color: #2271b1;
+    border-radius: 50%;
+    animation: op-spin 0.7s linear infinite;
+    flex-shrink: 0;
+}
+
+@keyframes op-spin {
+    to { transform: rotate(360deg); }
+}
+
+/* ─── Error notice ──────────────────────────────────────────────────── */
+
+.op-native-error {
+    background: #fef0f0;
+    border: 1px solid #f5c2c2;
+    color: #842029;
+    border-radius: 4px;
+    padding: 8px 12px;
+    font-size: 0.9em;
+    margin-bottom: 8px;
+}
+
+/* ─── Empty state ───────────────────────────────────────────────────── */
+
+.op-no-methods {
+    color: #777;
+    font-size: 0.9em;
+    font-style: italic;
+}
