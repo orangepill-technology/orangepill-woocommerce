@@ -153,6 +153,9 @@ function orangepill_wc_init() {
     // Enqueue frontend checkout assets
     add_action('wp_enqueue_scripts', 'orangepill_wc_enqueue_checkout_assets');
 
+    // Webchat widget injection
+    add_action('wp_footer', 'orangepill_wc_inject_webchat');
+
     // Admin: manual "Mark as Paid" action (reconciliation — not polling)
     add_action('admin_post_orangepill_mark_paid', 'orangepill_wc_mark_paid');
 
@@ -268,6 +271,26 @@ function orangepill_wc_mark_paid() {
 
     wp_redirect(add_query_arg('op_notice', 'marked_paid', wp_get_referer()));
     exit;
+}
+
+/**
+ * Inject webchat widget script tag into the page footer when enabled.
+ */
+function orangepill_wc_inject_webchat() {
+    $settings = get_option('woocommerce_orangepill_settings', array());
+
+    if (($settings['webchat_enabled'] ?? 'no') !== 'yes') {
+        return;
+    }
+
+    $entrypoint_id = trim($settings['webchat_entrypoint_id'] ?? '');
+    $embed_url     = trim($settings['webchat_embed_url'] ?? '');
+
+    if (empty($entrypoint_id) || empty($embed_url)) {
+        return;
+    }
+
+    echo '<script src="' . esc_url($embed_url) . '" data-entrypoint-id="' . esc_attr($entrypoint_id) . '"></script>' . "\n";
 }
 
 /**

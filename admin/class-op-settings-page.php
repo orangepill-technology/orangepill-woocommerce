@@ -243,6 +243,64 @@ class OP_Settings_Page {
                             </p>
                         </td>
                     </tr>
+
+                    <tr>
+                        <td colspan="2"><h2 style="margin: 10px 0 0;"><?php esc_html_e('Webchat', 'orangepill-wc'); ?></h2></td>
+                    </tr>
+
+                    <tr>
+                        <th scope="row">
+                            <label for="webchat_enabled"><?php esc_html_e('Enable Webchat', 'orangepill-wc'); ?></label>
+                        </th>
+                        <td>
+                            <input
+                                type="checkbox"
+                                name="webchat_enabled"
+                                id="webchat_enabled"
+                                value="yes"
+                                <?php checked($settings['webchat_enabled'] ?? 'no', 'yes'); ?>
+                            />
+                            <p class="description">
+                                <?php esc_html_e('Inject the Orangepill webchat widget on all store pages.', 'orangepill-wc'); ?>
+                            </p>
+                        </td>
+                    </tr>
+
+                    <tr>
+                        <th scope="row">
+                            <label for="webchat_entrypoint_id"><?php esc_html_e('Entrypoint ID', 'orangepill-wc'); ?></label>
+                        </th>
+                        <td>
+                            <input
+                                type="text"
+                                name="webchat_entrypoint_id"
+                                id="webchat_entrypoint_id"
+                                value="<?php echo esc_attr($settings['webchat_entrypoint_id'] ?? '679625a3-7ce0-41be-8c11-ca60e83d473a'); ?>"
+                                class="regular-text"
+                            />
+                            <p class="description">
+                                <?php esc_html_e('Webchat entrypoint UUID from the Orangepill dashboard.', 'orangepill-wc'); ?>
+                            </p>
+                        </td>
+                    </tr>
+
+                    <tr>
+                        <th scope="row">
+                            <label for="webchat_embed_url"><?php esc_html_e('Webchat Script URL', 'orangepill-wc'); ?></label>
+                        </th>
+                        <td>
+                            <input
+                                type="text"
+                                name="webchat_embed_url"
+                                id="webchat_embed_url"
+                                value="<?php echo esc_attr($settings['webchat_embed_url'] ?? 'http://localhost:5200/webchat/embed.js'); ?>"
+                                class="regular-text"
+                            />
+                            <p class="description">
+                                <?php esc_html_e('Full URL to the webchat embed.js script (leave default for local dev).', 'orangepill-wc'); ?>
+                            </p>
+                        </td>
+                    </tr>
                 </table>
 
                 <p class="submit">
@@ -351,13 +409,16 @@ class OP_Settings_Page {
         $warnings = array();
 
         $settings = array(
-            'api_key'            => sanitize_text_field($_POST['api_key'] ?? ''),
-            'api_base_url'       => esc_url_raw($_POST['api_base_url'] ?? 'https://console.orangepill.cloud'),
-            'integration_id'     => sanitize_text_field($_POST['integration_id'] ?? ''),
-            'merchant_id'        => sanitize_text_field($_POST['merchant_id'] ?? ''),
-            'webhook_secret'     => sanitize_text_field($_POST['webhook_secret'] ?? ''),
-            'checkout_ui_url'    => esc_url_raw($_POST['checkout_ui_url'] ?? 'https://checkout.orangepill.cloud'),
-            'webhook_public_url' => esc_url_raw($_POST['webhook_public_url'] ?? ''),
+            'api_key'               => sanitize_text_field($_POST['api_key'] ?? ''),
+            'api_base_url'          => esc_url_raw($_POST['api_base_url'] ?? 'https://console.orangepill.cloud'),
+            'integration_id'        => sanitize_text_field($_POST['integration_id'] ?? ''),
+            'merchant_id'           => sanitize_text_field($_POST['merchant_id'] ?? ''),
+            'webhook_secret'        => sanitize_text_field($_POST['webhook_secret'] ?? ''),
+            'checkout_ui_url'       => esc_url_raw($_POST['checkout_ui_url'] ?? 'https://checkout.orangepill.cloud'),
+            'webhook_public_url'    => esc_url_raw($_POST['webhook_public_url'] ?? ''),
+            'webchat_enabled'       => isset($_POST['webchat_enabled']) ? 'yes' : 'no',
+            'webchat_entrypoint_id' => sanitize_text_field($_POST['webchat_entrypoint_id'] ?? '679625a3-7ce0-41be-8c11-ca60e83d473a'),
+            'webchat_embed_url'     => esc_url_raw($_POST['webchat_embed_url'] ?? 'http://localhost:5200/webchat/embed.js'),
         );
 
         if (!empty($settings['webhook_secret']) && strlen($settings['webhook_secret']) < 8) {
