@@ -463,25 +463,32 @@ class OP_Webhook_Handler {
      */
     private function handle_payment_succeeded($data, $payload_hash) {
         $session_id = $data['session_id'] ?? null;
-        $payment_id = $data['id'] ?? null;
-        $event_id = $data['event_id'] ?? null;
+        $payment_id = $data['id'] ?? ($data['payment_id'] ?? null);
+        $intent_id  = $data['intent_id'] ?? ($data['intentId'] ?? null);
+        $event_id   = $data['event_id'] ?? null;
 
-        if (empty($session_id)) {
-            OP_Logger::warning(
-                'webhook_missing_session_id',
-                'payment.succeeded event missing session_id'
-            );
-            return;
+        // Native checkout: no session_id — find by intent_id or payment_id instead.
+        // Hosted checkout: session_id is the primary key.
+        $order = null;
+        if (!empty($session_id)) {
+            $order = $this->find_order_by_session_id($session_id);
         }
-
-        // Find order by session_id
-        $order = $this->find_order_by_session_id($session_id);
+        if (!$order && !empty($intent_id)) {
+            $order = $this->find_order_by_intent_id($intent_id);
+        }
+        if (!$order && !empty($payment_id)) {
+            $order = $this->find_order_by_intent_id($payment_id);
+        }
 
         if (!$order) {
             OP_Logger::warning(
                 'webhook_order_not_found',
-                'Order not found for session_id: ' . $session_id,
-                array('session_id' => $session_id)
+                'payment.succeeded: no WC order found — may arrive before form re-submit on async flows',
+                array(
+                    'session_id' => $session_id,
+                    'intent_id'  => $intent_id,
+                    'payment_id' => $payment_id,
+                )
             );
             return;
         }
@@ -554,27 +561,32 @@ class OP_Webhook_Handler {
      * @param string $payload_hash SHA256 hash of raw payload
      */
     private function handle_payment_failed($data, $payload_hash) {
-        $session_id = $data['session_id'] ?? null;
-        $payment_id = $data['id'] ?? null;
-        $event_id = $data['event_id'] ?? null;
+        $session_id     = $data['session_id'] ?? null;
+        $payment_id     = $data['id'] ?? ($data['payment_id'] ?? null);
+        $intent_id      = $data['intent_id'] ?? ($data['intentId'] ?? null);
+        $event_id       = $data['event_id'] ?? null;
         $failure_reason = $data['failure_reason'] ?? 'Unknown reason';
 
-        if (empty($session_id)) {
-            OP_Logger::warning(
-                'webhook_missing_session_id',
-                'payment.failed event missing session_id'
-            );
-            return;
+        $order = null;
+        if (!empty($session_id)) {
+            $order = $this->find_order_by_session_id($session_id);
         }
-
-        // Find order by session_id
-        $order = $this->find_order_by_session_id($session_id);
+        if (!$order && !empty($intent_id)) {
+            $order = $this->find_order_by_intent_id($intent_id);
+        }
+        if (!$order && !empty($payment_id)) {
+            $order = $this->find_order_by_intent_id($payment_id);
+        }
 
         if (!$order) {
             OP_Logger::warning(
                 'webhook_order_not_found',
-                'Order not found for session_id: ' . $session_id,
-                array('session_id' => $session_id)
+                'payment.failed: no WC order found',
+                array(
+                    'session_id' => $session_id,
+                    'intent_id'  => $intent_id,
+                    'payment_id' => $payment_id,
+                )
             );
             return;
         }
@@ -658,9 +670,29 @@ class OP_Webhook_Handler {
      */
     private function find_order_by_session_id($session_id) {
         $orders = wc_get_orders(array(
-            'limit' => 1,
-            'meta_key' => '_orangepill_session_id',
+            'limit'      => 1,
+            'meta_key'   => '_orangepill_session_id',
             'meta_value' => $session_id,
+        ));
+
+        return !empty($orders) ? $orders[0] : null;
+    }
+
+    /**
+     * Find order by intent_id (native checkout path).
+     *
+     * Used as fallback when payment.succeeded / payment.failed arrives without
+     * a session_id — which is the case for native checkout intents that registered
+     * a callback on execute.
+     *
+     * @param string $intent_id Payment intent ID
+     * @return WC_Order|null Order or null
+     */
+    private function find_order_by_intent_id($intent_id) {
+        $orders = wc_get_orders(array(
+            'limit'      => 1,
+            'meta_key'   => '_orangepill_intent_id',
+            'meta_value' => $intent_id,
         ));
 
         return !empty($orders) ? $orders[0] : null;

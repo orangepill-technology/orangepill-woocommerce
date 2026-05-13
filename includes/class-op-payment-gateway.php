@@ -726,8 +726,27 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
             $selection['channel'] = $channel;
         }
 
+        $execute_body = array('selection' => $selection);
+
+        // Register a server-side callback for async payment methods (QR, PSE, push-approval).
+        // Without this, a user closing the tab before polling detects completion leaves the
+        // WC order permanently stuck. The callback delivers payment.succeeded / payment.failed
+        // to the webhook handler regardless of browser state.
+        $settings       = get_option('woocommerce_orangepill_settings', array());
+        $callback_url   = orangepill_wc_get_webhook_url();
+        $webhook_secret = $settings['webhook_secret'] ?? '';
+        if (!empty($callback_url)) {
+            $execute_body['callback'] = array(
+                'url'    => $callback_url,
+                'events' => array('payment.succeeded', 'payment.failed'),
+            );
+            if (!empty($webhook_secret)) {
+                $execute_body['callback']['secret'] = $webhook_secret;
+            }
+        }
+
         $api    = new OP_API_Client();
-        $result = $api->execute_payment_intent($intent_id, array('selection' => $selection));
+        $result = $api->execute_payment_intent($intent_id, $execute_body);
 
         if (is_wp_error($result)) {
             OP_Logger::error(
@@ -743,12 +762,13 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
         $exec_type  = $execution['type']   ?? '';
         $exec_url   = $execution['url']    ?? '';
 
-        // Store redirect URL server-side for secure use in process_payment()
+        // Store redirect URL server-side for secure use in process_payment().
+        // 60 min TTL: slow PSP pages (bank redirects) can take 10+ minutes.
         if ($exec_type === 'redirect' && !empty($exec_url)) {
             set_transient(
                 'op_exec_url_' . sanitize_key($intent_id),
                 $exec_url,
-                15 * MINUTE_IN_SECONDS
+                60 * MINUTE_IN_SECONDS
             );
         }
 
