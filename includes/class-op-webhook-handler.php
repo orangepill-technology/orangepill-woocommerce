@@ -19,6 +19,24 @@ if (!defined('ABSPATH')) {
 }
 
 class OP_Webhook_Handler {
+
+    /**
+     * Terminal state protection — once an order reaches any of these states it
+     * must not be downgraded by a late-arriving or duplicate webhook.
+     *
+     * Each constant covers the union of states where the corresponding event
+     * type should be a no-op:
+     *
+     *   AFTER_SUCCESS  — order already paid; a second succeeded event must not re-fire payment_complete()
+     *   AFTER_FAILURE  — order already resolved (paid or failed); failure must not override processing
+     *   AFTER_EXPIRY   — order already resolved in any direction; expiry must not cancel a paid order
+     *
+     * Update these lists if Orangepill canonical payment states change.
+     */
+    private const TERMINAL_AFTER_SUCCESS = ['completed', 'refunded'];
+    private const TERMINAL_AFTER_FAILURE = ['completed', 'processing', 'refunded'];
+    private const TERMINAL_AFTER_EXPIRY  = ['completed', 'processing', 'refunded', 'cancelled'];
+
     /**
      * Handle incoming webhook request
      */
@@ -245,7 +263,7 @@ class OP_Webhook_Handler {
 
         // Protect terminal states — don't downgrade a completed order
         $current_status = $order->get_status();
-        if (in_array($current_status, array('completed', 'refunded'), true)) {
+        if (in_array($current_status, self::TERMINAL_AFTER_SUCCESS, true)) {
             OP_Logger::info(
                 'webhook_terminal_state_protected',
                 'Order already in terminal state, skipping checkout.session.succeeded',
@@ -334,7 +352,7 @@ class OP_Webhook_Handler {
 
         // Protect terminal states
         $current_status = $order->get_status();
-        if (in_array($current_status, array('completed', 'processing', 'refunded'), true)) {
+        if (in_array($current_status, self::TERMINAL_AFTER_FAILURE, true)) {
             OP_Logger::info(
                 'webhook_terminal_state_protected',
                 'Order already in terminal state, skipping checkout.session.failed',
@@ -426,7 +444,7 @@ class OP_Webhook_Handler {
         //   Allow cancel: pending, on-hold, failed (unpaid / not yet fulfilled)
         //   Block  cancel: processing, completed, refunded, cancelled (already resolved)
         $current_status = $order->get_status();
-        if (in_array($current_status, array('completed', 'processing', 'refunded', 'cancelled'), true)) {
+        if (in_array($current_status, self::TERMINAL_AFTER_EXPIRY, true)) {
             OP_Logger::info(
                 'webhook_terminal_state_protected',
                 'Order already in terminal state, skipping checkout.session.expired',
