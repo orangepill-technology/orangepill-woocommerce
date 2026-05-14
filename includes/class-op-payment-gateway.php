@@ -36,6 +36,24 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
         $this->enabled     = $this->get_option('enabled');
 
         add_action('woocommerce_update_options_payment_gateways_' . $this->id, array($this, 'process_admin_options'));
+
+        // PR-WC-BLOCKS-COMPATIBILITY-V1: register with WC Blocks payment method registry.
+        // OP_Blocks_Integration is a renderer-only; it does not modify process_payment().
+        add_action(
+            'woocommerce_blocks_payment_method_type_registration',
+            array( $this, 'register_blocks_payment_method' )
+        );
+    }
+
+    /**
+     * Register the Orangepill Blocks integration with the WC Blocks registry.
+     *
+     * @param \Automattic\WooCommerce\Blocks\Payments\PaymentMethodRegistry $registry
+     */
+    public function register_blocks_payment_method( $registry ) {
+        if ( class_exists( 'OP_Blocks_Integration' ) ) {
+            $registry->register( new OP_Blocks_Integration() );
+        }
     }
 
     /**

@@ -1,3 +1,7 @@
+# Build output and Node dependencies (PR-WC-BLOCKS-COMPATIBILITY-V1)
+node_modules/
+build/
+
 # Wordpress - ignore core, configuration, examples, uploads and logs.
 # https://github.com/github/gitignore/blob/main/WordPress.gitignore
 
