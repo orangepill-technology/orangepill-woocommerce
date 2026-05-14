@@ -1,0 +1,289 @@
+/**
+ * OrangepillContent — Blocks payment method content component.
+ * (PR-WC-BLOCKS-COMPATIBILITY-V1)
+ *
+ * Implements the same execution-type dispatch as native-payment-shell.js but
+ * as a React component for WC Blocks checkout. WCBLOCKS-006 invariant: all 4
+ * execution types are handled (redirect / processing / completed /
+ * payment_request_required).
+ *
+ * Flow (mirrors native-payment-shell.js):
+ *   1. Mount  → load payment options via AJAX
+ *   2. Submit → onPaymentSetup fires:
+ *       a. createIntent  → POST /v4/payment-intents
+ *       b. executeIntent → POST /v4/payment-intents/{id}/execute
+ *          (server registers async callback = webhook safety net)
+ *       c. Dispatch on execution_type:
+ *          redirect   → pass intent_id to process_payment(), PHP fetches redirect from transient
+ *          processing → pass intent_id, order goes on-hold, webhook completes
+ *          completed  → pass intent_id, process_payment() verifies via API
+ *          payment_request_required
+ *                     → render QR/key inline, poll until succeeded, then pass as completed
+ *
+ * Server authority: process_payment() reads $_POST['_orangepill_intent_id'] and
+ * $_POST['_orangepill_execution_type'] set by WC Blocks from paymentMethodData —
+ * identical to the classic shortcode checkout submission. No PHP changes needed.
+ *
+ * Wallet UI: deferred to PR-WC-BLOCKS-WALLET-V1. The wallet does not break; it
+ * simply isn't surfaced in the Blocks UI in V1.
+ */
+
+import { useState, useEffect, useRef } from '@wordpress/element';
+import { decodeEntities } from '@wordpress/html-entities';
+import { PaymentMethodSelector } from './components/PaymentMethodSelector';
+import { QRCodeDisplay }         from './components/QRCodeDisplay';
+import { getPaymentOptions, createIntent, executeIntent, pollPaymentStatus } from './api';
+
+const config = window.orangepillBlocksConfig || {};
+const i18n   = config.i18n || {};
+
+export function OrangepillContent( { eventRegistration, emitResponse, billing } ) {
+    // onPaymentSetup is the WC Blocks 8.0+ event (replaced onPaymentProcessing in WC 7.9).
+    // Fall back to onPaymentProcessing for any edge case running an older version in range.
+    const onPaymentEvent = eventRegistration.onPaymentSetup
+        ?? eventRegistration.onPaymentProcessing;
+
+    const [ options,        setOptions        ] = useState( null );
+    const [ loading,        setLoading        ] = useState( true );
+    const [ loadError,      setLoadError      ] = useState( null );
+    const [ selectedMethod,  setSelectedMethod  ] = useState( null );
+    const [ selectedChannel, setSelectedChannel ] = useState( null );
+    const [ execState,      setExecState      ] = useState( 'idle' ); // idle | awaiting_qr | confirmed
+    const [ paymentRequest, setPaymentRequest  ] = useState( null );
+
+    // Refs keep the onPaymentSetup closure current without re-registering it on every method change.
+    const selectedMethodRef  = useRef( selectedMethod );
+    const selectedChannelRef = useRef( selectedChannel );
+    useEffect( () => { selectedMethodRef.current  = selectedMethod;  }, [ selectedMethod  ] );
+    useEffect( () => { selectedChannelRef.current = selectedChannel; }, [ selectedChannel ] );
+
+    // Cart total — convert from WC Blocks minor units to major units used by the payment API.
+    // e.g. COP: 438211 / 10^0 = 438211; USD: 438211 / 10^2 = 4382.11
+    const minorUnit  = billing?.cartTotals?.currency_minor_unit ?? 2;
+    const rawTotal   = parseInt( billing?.cartTotals?.total_price ?? '0', 10 );
+    const cartTotal  = ( rawTotal / Math.pow( 10, minorUnit ) ).toString();
+    const currency   = config.currency;
+    const country    = config.country;
+
+    // Load payment options when cart total changes (coupon applied, etc.)
+    useEffect( () => {
+        let cancelled = false;
+        setLoading( true );
+        setLoadError( null );
+
+        getPaymentOptions( currency, cartTotal, country )
+            .then( data => {
+                if ( cancelled ) return;
+                const eligible = ( data.options || [] ).filter( o => o.eligible );
+                setOptions( eligible );
+                setLoading( false );
+                if ( eligible.length > 0 ) {
+                    const first = eligible[ 0 ];
+                    const ch    = ( first.channels || [] )[ 0 ] ?? null;
+                    setSelectedMethod( first.methodKey );
+                    setSelectedChannel( ch );
+                }
+            } )
+            .catch( () => {
+                if ( cancelled ) return;
+                setLoadError( i18n.options_error || 'Unable to load payment options.' );
+                setLoading( false );
+            } );
+
+        return () => { cancelled = true; };
+    }, [ currency, cartTotal, country ] );
+
+    // Register the payment setup callback.
+    // Registered only once (onPaymentEvent is stable from WC Blocks).
+    // Reads method/channel from refs so stale closures never mis-fire.
+    useEffect( () => {
+        if ( ! onPaymentEvent ) return;
+
+        const unsubscribe = onPaymentEvent( async () => {
+            const methodKey = selectedMethodRef.current;
+            const channel   = selectedChannelRef.current;
+
+            if ( ! methodKey ) {
+                return {
+                    type:    emitResponse.responseTypes.ERROR,
+                    message: i18n.select_method || 'Please select a payment method.',
+                };
+            }
+
+            // AbortController so polling stops cleanly if the component unmounts
+            // mid-poll (e.g. user navigates away).
+            const ac = new AbortController();
+
+            try {
+                // Step 1: create intent
+                const intentResult = await createIntent( methodKey, currency, cartTotal );
+                const intentId     = intentResult.intentId;
+                if ( ! intentId ) throw new Error( 'No intent ID returned' );
+
+                // Step 2: execute intent (server registers payment.succeeded/failed callback here)
+                const execResult = await executeIntent( intentId, methodKey, channel );
+                const execType   = execResult.execution_type;
+
+                // Step 3: dispatch on execution type
+                // Mirrors the switch block in native-payment-shell.js executeIntent().
+                // WCBLOCKS-006 invariant: all 4 types handled.
+                switch ( execType ) {
+
+                    case 'redirect':
+                        // Redirect URL stored server-side in transient by ajax_execute_intent().
+                        // process_payment() (Path A) fetches it from the transient — never trusts
+                        // browser-supplied URL. WCBLOCKS-011 invariant satisfied.
+                        return {
+                            type: emitResponse.responseTypes.SUCCESS,
+                            meta: { paymentMethodData: {
+                                _orangepill_intent_id:      intentId,
+                                _orangepill_execution_type: 'redirect',
+                            } },
+                        };
+
+                    case 'processing':
+                        // Async payment (e.g. card awaiting 3DS / bank-push approval).
+                        // Order goes on-hold; webhook (registered above on execute) completes it
+                        // regardless of whether the browser stays open.
+                        return {
+                            type: emitResponse.responseTypes.SUCCESS,
+                            meta: { paymentMethodData: {
+                                _orangepill_intent_id:      intentId,
+                                _orangepill_execution_type: 'processing',
+                            } },
+                        };
+
+                    case 'completed':
+                        // Synchronous success — process_payment() verifies via API and calls
+                        // payment_complete().
+                        return {
+                            type: emitResponse.responseTypes.SUCCESS,
+                            meta: { paymentMethodData: {
+                                _orangepill_intent_id:      intentId,
+                                _orangepill_execution_type: 'completed',
+                            } },
+                        };
+
+                    case 'payment_request_required': {
+                        // QR / dynamic-key flow:
+                        //   1. Render QR inline (component re-renders with paymentRequest state)
+                        //   2. Poll GET /v4/payments/{id}/status (4s interval, 10 min timeout)
+                        //   3. On success → submit as 'completed'; process_payment() verifies
+                        // The webhook callback registered in step 2 is the async safety net if
+                        // the tab closes while the user is scanning.
+                        const pr        = execResult.payment_request;
+                        const paymentId = pr?.payment_id || intentId;
+
+                        setPaymentRequest( pr );
+                        setExecState( 'awaiting_qr' );
+
+                        const pollResult = await pollPaymentStatus( paymentId, ac.signal );
+
+                        if ( pollResult.status === 'succeeded' ) {
+                            setExecState( 'confirmed' );
+                            return {
+                                type: emitResponse.responseTypes.SUCCESS,
+                                meta: { paymentMethodData: {
+                                    _orangepill_intent_id:      intentId,
+                                    _orangepill_execution_type: 'completed',
+                                } },
+                            };
+                        }
+
+                        setExecState( 'idle' );
+                        const errMsg = pollResult.status === 'timeout'
+                            ? ( i18n.payment_timeout || 'Payment timed out. Please try again.' )
+                            : ( i18n.payment_failed  || 'Payment was not completed. Please try again.' );
+                        return {
+                            type:    emitResponse.responseTypes.ERROR,
+                            message: errMsg,
+                        };
+                    }
+
+                    default:
+                        return {
+                            type:    emitResponse.responseTypes.ERROR,
+                            message: i18n.payment_error || 'Unsupported payment method type.',
+                        };
+                }
+
+            } catch ( err ) {
+                setExecState( 'idle' );
+                return {
+                    type:    emitResponse.responseTypes.ERROR,
+                    message: err.message || ( i18n.payment_error || 'Payment failed. Please try again.' ),
+                };
+            } finally {
+                ac.abort();
+            }
+        } );
+
+        return unsubscribe;
+    }, [ onPaymentEvent, emitResponse.responseTypes ] );
+
+    // ── Render ────────────────────────────────────────────────────────────────
+
+    if ( loading ) {
+        return (
+            <div className="op-blocks-shell" data-state="loading">
+                <div className="op-native-loading" aria-live="polite">
+                    { i18n.loading_options || 'Loading payment options...' }
+                </div>
+            </div>
+        );
+    }
+
+    if ( loadError ) {
+        return (
+            <div className="op-blocks-shell" data-state="error">
+                { config.description && <p>{ decodeEntities( config.description ) }</p> }
+                <div className="op-native-error" role="alert">{ loadError }</div>
+            </div>
+        );
+    }
+
+    if ( ! options || ! options.length ) {
+        return (
+            <div className="op-blocks-shell" data-state="empty">
+                { config.description && <p>{ decodeEntities( config.description ) }</p> }
+                <p className="op-no-methods">{ i18n.no_methods || 'No payment methods available.' }</p>
+            </div>
+        );
+    }
+
+    return (
+        <div className="op-blocks-shell" data-state={ execState }>
+            { config.description && <p>{ decodeEntities( config.description ) }</p> }
+
+            <PaymentMethodSelector
+                methods={ options }
+                selected={ selectedMethod }
+                selectedChannel={ selectedChannel }
+                onChange={ ( key, ch ) => {
+                    setSelectedMethod( key );
+                    setSelectedChannel( ch );
+                    setPaymentRequest( null );
+                    setExecState( 'idle' );
+                } }
+            />
+
+            { /* Wallet balance display for logged-in users is deferred to
+                 PR-WC-BLOCKS-WALLET-V1. Classic shortcode checkout retains wallet UI.
+                 Guest and no-wallet-selection flows are unaffected in V1. */ }
+
+            { execState === 'awaiting_qr' && paymentRequest && (
+                <QRCodeDisplay
+                    paymentRequest={ paymentRequest }
+                    onExpired={ () => setExecState( 'idle' ) }
+                />
+            ) }
+
+            { execState === 'confirmed' && (
+                <div className="op-pr-success" role="status" aria-live="polite">
+                    <span className="op-pr-success-icon" aria-hidden="true">✓</span>
+                    { ' ' }{ i18n.payment_confirmed || '¡Pago confirmado!' }
+                </div>
+            ) }
+        </div>
+    );
+}
