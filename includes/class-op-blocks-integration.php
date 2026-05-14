@@ -89,13 +89,18 @@ class OP_Blocks_Integration extends AbstractPaymentMethodType {
      * Nonce: single shared 'orangepill_wc_checkout' nonce — matches all existing
      * check_ajax_referer() calls in OP_Payment_Gateway. No per-endpoint nonces needed.
      *
+     * Wallet: included for logged-in users with a valid Orangepill customer account
+     * and a spendable balance. Balance is fetched server-side (cached, 30s TTL) so
+     * no extra AJAX call is needed on Blocks checkout mount. The separate applyNonce
+     * covers the orangepill_apply_wallet AJAX action.
+     *
      * i18n strings are identical to the native shell (orangepillNative.i18n) so
      * both frontends share the same translation strings.
      */
     public function get_payment_method_data() {
         $default_country = substr( get_option( 'woocommerce_default_country', 'CO' ), 0, 2 );
 
-        return array(
+        $data = array(
             'title'       => $this->settings['title']       ?? __( 'Orangepill', 'orangepill-wc' ),
             'description' => $this->settings['description'] ?? '',
             'ajaxUrl'     => admin_url( 'admin-ajax.php' ),
@@ -103,29 +108,72 @@ class OP_Blocks_Integration extends AbstractPaymentMethodType {
             'currency'    => get_woocommerce_currency(),
             'country'     => $default_country,
             'isLoggedIn'  => is_user_logged_in(),
+            'wallet'      => array( 'enabled' => false ),
             'i18n'        => array(
-                'loading_options'    => __( 'Loading payment options...', 'orangepill-wc' ),
-                'select_method'      => __( 'Please select a payment method.', 'orangepill-wc' ),
-                'creating_payment'   => __( 'Preparing payment...', 'orangepill-wc' ),
-                'processing_payment' => __( 'Processing payment...', 'orangepill-wc' ),
-                'payment_error'      => __( 'Payment could not be processed. Please try again.', 'orangepill-wc' ),
-                'options_error'      => __( 'Unable to load payment options. Please refresh the page.', 'orangepill-wc' ),
-                'no_methods'         => __( 'No payment methods are available for this order.', 'orangepill-wc' ),
-                'speed_instant'      => __( 'Instant', 'orangepill-wc' ),
-                'speed_same_day'     => __( 'Same day', 'orangepill-wc' ),
-                'speed_next_day'     => __( 'Next day', 'orangepill-wc' ),
-                'payment_key'        => __( 'Clave de pago', 'orangepill-wc' ),
-                'copy'               => __( 'Copiar', 'orangepill-wc' ),
-                'copied'             => __( 'Copiado', 'orangepill-wc' ),
-                'expires_in'         => __( 'Expira en', 'orangepill-wc' ),
-                'channel_qr'         => __( 'QR', 'orangepill-wc' ),
-                'channel_reference'  => __( 'Llave Dinámica', 'orangepill-wc' ),
-                'waiting_payment'    => __( 'Esperando confirmación del pago...', 'orangepill-wc' ),
-                'payment_confirmed'  => __( '¡Pago confirmado!', 'orangepill-wc' ),
-                'payment_expired'    => __( 'El tiempo para pagar ha expirado. Por favor intenta de nuevo.', 'orangepill-wc' ),
-                'payment_failed'     => __( 'El pago no fue completado. Por favor intenta de nuevo.', 'orangepill-wc' ),
-                'payment_timeout'    => __( 'Tiempo de espera agotado. Verifica tu email o intenta de nuevo.', 'orangepill-wc' ),
+                'loading_options'         => __( 'Loading payment options...', 'orangepill-wc' ),
+                'select_method'           => __( 'Please select a payment method.', 'orangepill-wc' ),
+                'creating_payment'        => __( 'Preparing payment...', 'orangepill-wc' ),
+                'processing_payment'      => __( 'Processing payment...', 'orangepill-wc' ),
+                'payment_error'           => __( 'Payment could not be processed. Please try again.', 'orangepill-wc' ),
+                'options_error'           => __( 'Unable to load payment options. Please refresh the page.', 'orangepill-wc' ),
+                'no_methods'              => __( 'No payment methods are available for this order.', 'orangepill-wc' ),
+                'speed_instant'           => __( 'Instant', 'orangepill-wc' ),
+                'speed_same_day'          => __( 'Same day', 'orangepill-wc' ),
+                'speed_next_day'          => __( 'Next day', 'orangepill-wc' ),
+                'payment_key'             => __( 'Clave de pago', 'orangepill-wc' ),
+                'copy'                    => __( 'Copiar', 'orangepill-wc' ),
+                'copied'                  => __( 'Copiado', 'orangepill-wc' ),
+                'expires_in'              => __( 'Expira en', 'orangepill-wc' ),
+                'channel_qr'              => __( 'QR', 'orangepill-wc' ),
+                'channel_reference'       => __( 'Llave Dinámica', 'orangepill-wc' ),
+                'waiting_payment'         => __( 'Esperando confirmación del pago...', 'orangepill-wc' ),
+                'payment_confirmed'       => __( '¡Pago confirmado!', 'orangepill-wc' ),
+                'payment_expired'         => __( 'El tiempo para pagar ha expirado. Por favor intenta de nuevo.', 'orangepill-wc' ),
+                'payment_failed'          => __( 'El pago no fue completado. Por favor intenta de nuevo.', 'orangepill-wc' ),
+                'payment_timeout'         => __( 'Tiempo de espera agotado. Verifica tu email o intenta de nuevo.', 'orangepill-wc' ),
+                'wallet_available'        => __( 'Rewards balance:', 'orangepill-wc' ),
+                'wallet_apply'            => __( 'Apply wallet', 'orangepill-wc' ),
+                'wallet_apply_max'        => __( 'Apply max', 'orangepill-wc' ),
+                'wallet_applying'         => __( 'Applying...', 'orangepill-wc' ),
+                'wallet_applied'          => __( 'Wallet applied:', 'orangepill-wc' ),
+                'wallet_remaining'        => __( 'Remaining to pay:', 'orangepill-wc' ),
+                'wallet_full_cover'       => __( 'Your wallet covers the full order total. No additional payment needed.', 'orangepill-wc' ),
+                'wallet_final_note'       => __( 'Final amount confirmed by Orangepill', 'orangepill-wc' ),
+                'wallet_apply_error'      => __( 'Wallet apply failed. Please try again.', 'orangepill-wc' ),
+                'wallet_invalid_amount'   => __( 'Please enter a valid amount.', 'orangepill-wc' ),
+                'wallet_exceeds_balance'  => __( 'Amount exceeds wallet balance.', 'orangepill-wc' ),
+                'wallet_exceeds_total'    => __( 'Amount exceeds order total.', 'orangepill-wc' ),
+                'wallet_amount_placeholder' => __( 'Amount to apply', 'orangepill-wc' ),
             ),
         );
+
+        // Wallet data — logged-in users with an Orangepill customer account only.
+        // Balance fetched server-side (OP_Loyalty cached transient) — zero client-side AJAX
+        // needed for balance display. Apply uses a separate nonce (orangepill_apply_wallet).
+        if ( is_user_logged_in() ) {
+            $user_id     = get_current_user_id();
+            $customer_id = get_user_meta( $user_id, '_orangepill_customer_id', true );
+
+            if ( ! empty( $customer_id ) ) {
+                $loyalty = new OP_Loyalty();
+                $wallet  = $loyalty->get_spendable_wallet_for_current_user();
+
+                if ( $wallet ) {
+                    $spendable = (float) ( $wallet['spendable_balance'] ?? $wallet['balance'] ?? 0 );
+
+                    if ( $spendable > 0 ) {
+                        $data['wallet'] = array(
+                            'enabled'    => true,
+                            'balance'    => $spendable,
+                            'currency'   => $wallet['currency'] ?? get_woocommerce_currency(),
+                            'walletId'   => $wallet['id']       ?? '',
+                            'applyNonce' => wp_create_nonce( 'orangepill_apply_wallet' ),
+                        );
+                    }
+                }
+            }
+        }
+
+        return $data;
     }
 }

@@ -1,9 +1,9 @@
 /**
- * Orangepill Blocks API helpers (PR-WC-BLOCKS-COMPATIBILITY-V1)
+ * Orangepill Blocks API helpers (PR-WC-BLOCKS-COMPATIBILITY-V1 / PR-WC-BLOCKS-WALLET-V1)
  *
- * Thin wrappers over the existing WP AJAX endpoints.
- * WCBLOCKS-003 invariant: zero new AJAX endpoints introduced.
- * All actions match the existing check_ajax_referer('orangepill_wc_checkout') handlers.
+ * Thin wrappers over WP AJAX endpoints.
+ * All payment actions use the shared 'orangepill_wc_checkout' nonce.
+ * Wallet apply uses its own 'orangepill_apply_wallet' nonce (config.wallet.applyNonce).
  */
 
 const config = window.orangepillBlocksConfig || {};
@@ -63,6 +63,43 @@ export function executeIntent( intentId, methodKey, channel ) {
     const data = { intent_id: intentId, method_key: methodKey };
     if ( channel ) data.channel = channel;
     return ajaxPost( 'orangepill_execute_intent', data );
+}
+
+/**
+ * Apply wallet balance to a new checkout session.
+ * Calls: orangepill_apply_wallet (ajax_apply_wallet) — 6th canonical endpoint.
+ * Uses config.wallet.applyNonce (separate from main checkout nonce).
+ *
+ * Server creates a temporary checkout session, applies the wallet, and returns
+ * { sessionId, appliedAmount, remainingPayable }. The caller stores this in state
+ * so onPaymentSetup can route zero-payable orders or create an intent for the remainder.
+ *
+ * @param {number} amount
+ * @param {string} walletId
+ * @param {string} cartTotal  Cart total in major currency units
+ * @param {AbortSignal} [signal]
+ */
+export async function applyWallet( amount, walletId, cartTotal, signal ) {
+    const wallet   = config.wallet || {};
+    const formData = new FormData();
+    formData.append( 'action',     'orangepill_apply_wallet' );
+    formData.append( 'nonce',      wallet.applyNonce || '' );
+    formData.append( 'amount',     amount );
+    formData.append( 'wallet_id',  walletId || '' );
+    formData.append( 'cart_total', cartTotal );
+    formData.append( 'currency',   config.currency );
+
+    const fetchOptions = { method: 'POST', body: formData, credentials: 'same-origin' };
+    if ( signal ) fetchOptions.signal = signal;
+
+    const response = await fetch( config.ajaxUrl, fetchOptions );
+    if ( ! response.ok ) throw new Error( 'Network error ' + response.status );
+
+    const result = await response.json();
+    if ( ! result.success ) {
+        throw new Error( ( result.data && result.data.message ) || 'Wallet apply failed' );
+    }
+    return result.data; // { sessionId, appliedAmount, remainingPayable }
 }
 
 /**

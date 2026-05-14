@@ -1,14 +1,19 @@
 /**
- * WCBLOCKS Architecture Invariant Tests (PR-WC-BLOCKS-COMPATIBILITY-V1)
+ * WCBLOCKS Architecture Invariant Tests
+ * (PR-WC-BLOCKS-COMPATIBILITY-V1 / PR-WC-BLOCKS-WALLET-V1)
  *
  * These tests verify that the Blocks integration does NOT violate the canonical
  * PHP-authority doctrine:
- *   - No new AJAX endpoints
- *   - No process_payment() modifications
+ *   - Canonical AJAX endpoint list (6: 5 payment + 1 wallet)
+ *   - No process_payment() modifications beyond the minimal wallet-only path
  *   - No webhook handler modifications
  *   - All 4 execution types handled
  *   - No browser-trusted redirect URLs
  *   - Idempotency and terminal state protection unchanged
+ *   - Wallet UI is server-authoritative (balance from config, apply via AJAX)
+ *   - Wallet is logged-in-only
+ *   - No client-side wallet balance computation
+ *   - No browser storage as wallet authority
  *
  * Tests are static file analysis (grep-based) — no runtime WP environment needed.
  */
@@ -43,7 +48,7 @@ test( 'WCBLOCKS-002: OP_Blocks_Integration implements required methods', () => {
 
 // ── WCBLOCKS-003 ─────────────────────────────────────────────────────────────
 
-test( 'WCBLOCKS-003: no new AJAX endpoints introduced — only existing 5 are present', () => {
+test( 'WCBLOCKS-003: canonical AJAX endpoint list — 5 payment endpoints + 1 wallet endpoint', () => {
     const gateway = read( 'includes/class-op-payment-gateway.php' );
 
     const canonicalActions = [
@@ -52,6 +57,8 @@ test( 'WCBLOCKS-003: no new AJAX endpoints introduced — only existing 5 are pr
         'orangepill_execute_intent',
         'orangepill_get_intent_status',
         'orangepill_get_payment_status',
+        // PR-WC-BLOCKS-WALLET-V1: wallet apply endpoint (logged-in only, separate nonce)
+        'orangepill_apply_wallet',
     ];
 
     // Extract all wp_ajax_ registrations, stripping the nopriv_ variant prefix
@@ -145,4 +152,80 @@ test( 'WCBLOCKS-012: Blocks JS passes _orangepill_intent_id as paymentMethodData
     // via the existing idempotency guard on the server side.
     expect( content ).toContain( '_orangepill_intent_id' );
     expect( content ).toContain( 'paymentMethodData' );
+} );
+
+// ── WCBLOCKS-013 ─────────────────────────────────────────────────────────────
+
+test( 'WCBLOCKS-013: WalletSection component exists', () => {
+    expect( exists( 'assets/js/blocks/components/WalletSection.jsx' ) ).toBe( true );
+} );
+
+// ── WCBLOCKS-014 ─────────────────────────────────────────────────────────────
+
+test( 'WCBLOCKS-014: WalletSection returns null when wallet is disabled (guest / no balance)', () => {
+    const wallet = read( 'assets/js/blocks/components/WalletSection.jsx' );
+    // Must have an early-return null guard on walletConfig.enabled
+    expect( wallet ).toContain( 'walletConfig?.enabled' );
+    expect( wallet ).toContain( 'return null' );
+} );
+
+// ── WCBLOCKS-015 ─────────────────────────────────────────────────────────────
+
+test( 'WCBLOCKS-015: orangepill_apply_wallet is the only wallet AJAX endpoint', () => {
+    const gateway = read( 'includes/class-op-payment-gateway.php' );
+    // orangepill_apply_wallet must be registered
+    expect( gateway ).toContain( 'wp_ajax_orangepill_apply_wallet' );
+    // Must NOT have a nopriv variant — wallet is logged-in-only
+    expect( gateway ).not.toContain( 'wp_ajax_nopriv_orangepill_apply_wallet' );
+    // No second wallet endpoint (e.g. orangepill_get_wallet_balance registered in gateway)
+    const walletMatches = [ ...gateway.matchAll( /wp_ajax_(?:nopriv_)?orangepill_\w*wallet\w*/g ) ];
+    expect( walletMatches.length ).toBe( 1 );
+} );
+
+// ── WCBLOCKS-016 ─────────────────────────────────────────────────────────────
+
+test( 'WCBLOCKS-016: process_payment() handles _orangepill_wallet_only path', () => {
+    const gateway = read( 'includes/class-op-payment-gateway.php' );
+    // Wallet-only detection guard
+    expect( gateway ).toContain( '_orangepill_wallet_only' );
+    expect( gateway ).toContain( 'process_wallet_only_payment' );
+    // Transient-based verification (not just trusting POST)
+    expect( gateway ).toContain( 'op_wallet_zero_payable_' );
+} );
+
+// ── WCBLOCKS-017 ─────────────────────────────────────────────────────────────
+
+test( 'WCBLOCKS-017: WalletSection reads balance from walletConfig.balance — no local computation', () => {
+    const wallet = read( 'assets/js/blocks/components/WalletSection.jsx' );
+    // Balance display must come from walletConfig.balance (server-rendered config)
+    expect( wallet ).toContain( 'walletConfig.balance' );
+    // Must NOT derive balance from local computation (e.g. no `let balance =` or `const balance =`)
+    expect( wallet ).not.toMatch( /(?:const|let|var)\s+balance\s*=/ );
+} );
+
+// ── WCBLOCKS-018 ─────────────────────────────────────────────────────────────
+
+test( 'WCBLOCKS-018: WalletSection cleans up in-flight requests on unmount (AbortController)', () => {
+    const wallet = read( 'assets/js/blocks/components/WalletSection.jsx' );
+    expect( wallet ).toContain( 'abortControllerRef' );
+    expect( wallet ).toContain( 'abort()' );
+    // Cleanup in useEffect return
+    expect( wallet ).toContain( 'return () =>' );
+} );
+
+// ── WCBLOCKS-019 ─────────────────────────────────────────────────────────────
+
+test( 'WCBLOCKS-019: wallet apply is idempotent — PHP handler caps amount server-side', () => {
+    const gateway = read( 'includes/class-op-payment-gateway.php' );
+    // Server re-fetches authoritative balance and caps the amount
+    expect( gateway ).toContain( 'get_spendable_wallet_for_current_user' );
+    expect( gateway ).toContain( 'min($amount,' );
+} );
+
+// ── WCBLOCKS-020 ─────────────────────────────────────────────────────────────
+
+test( 'WCBLOCKS-020: WalletSection does not use browser storage as wallet authority', () => {
+    const wallet = read( 'assets/js/blocks/components/WalletSection.jsx' );
+    expect( wallet ).not.toContain( 'sessionStorage' );
+    expect( wallet ).not.toContain( 'localStorage' );
 } );

@@ -74,6 +74,11 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
         add_action('wp_ajax_nopriv_orangepill_get_intent_status',   array($this, 'ajax_get_intent_status'));
         add_action('wp_ajax_orangepill_get_payment_status',         array($this, 'ajax_get_payment_status'));
         add_action('wp_ajax_nopriv_orangepill_get_payment_status',  array($this, 'ajax_get_payment_status'));
+
+        // PR-WC-BLOCKS-WALLET-V1: wallet apply for Blocks checkout (logged-in only).
+        // Creates a temporary checkout session, applies the wallet, returns remaining_payable.
+        // Separate nonce (orangepill_apply_wallet) from the main checkout nonce.
+        add_action('wp_ajax_orangepill_apply_wallet', array($this, 'ajax_apply_wallet'));
     }
 
     /**
@@ -210,6 +215,16 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
         if (!$order) {
             wc_add_notice(__('Order not found', 'orangepill-wc'), 'error');
             return array('result' => 'failure');
+        }
+
+        // ── Path W: Blocks wallet-only (zero-payable, PR-WC-BLOCKS-WALLET-V1) ──
+        // WalletSection returns _orangepill_wallet_only=true when remaining_payable === 0.
+        // Verified against a server-set transient keyed on session_id — not trusted blindly.
+        $wallet_only = isset($_POST['_orangepill_wallet_only'])
+            && $_POST['_orangepill_wallet_only'] === 'true';
+
+        if ($wallet_only) {
+            return $this->process_wallet_only_payment($order);
         }
 
         // ── Path A: native intent already executed by JS ──────────────────
@@ -476,6 +491,71 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
      * @param string   $intent_id
      * @return array WC process_payment result
      */
+    /**
+     * Path W: complete an order fully covered by wallet (Blocks checkout only).
+     *
+     * The WalletSection set _orangepill_wallet_only=true in paymentMethodData when
+     * remaining_payable === 0 after the apply_wallet AJAX call.  A server-set transient
+     * (set by ajax_apply_wallet()) acts as the authority — we never trust browser state alone.
+     *
+     * @param WC_Order $order
+     * @return array WC process_payment result
+     */
+    private function process_wallet_only_payment(WC_Order $order) {
+        $order_id   = $order->get_id();
+        $session_id = isset($_POST['_orangepill_wallet_session_id'])
+            ? sanitize_text_field($_POST['_orangepill_wallet_session_id'])
+            : '';
+
+        if (empty($session_id)) {
+            OP_Logger::error(
+                'blocks_wallet_only_no_session',
+                'Wallet-only path received no session_id',
+                array('order_id' => $order_id)
+            );
+            wc_add_notice(__('Wallet verification failed. Please try again.', 'orangepill-wc'), 'error');
+            return array('result' => 'failure');
+        }
+
+        $transient_key = 'op_wallet_zero_payable_' . sanitize_key($session_id);
+        $verification  = get_transient($transient_key);
+
+        if (empty($verification)) {
+            OP_Logger::error(
+                'blocks_wallet_only_stale',
+                'Wallet-only transient expired or not found — possible replay attack',
+                array('order_id' => $order_id, 'session_id' => $session_id)
+            );
+            wc_add_notice(__('Wallet session expired. Please apply your wallet balance again.', 'orangepill-wc'), 'error');
+            return array('result' => 'failure');
+        }
+
+        delete_transient($transient_key);
+
+        // Prefer server-verified amount from transient over POST value
+        $applied_amount = (float) ($verification['applied_amount'] ?? 0);
+
+        $order->update_meta_data('_orangepill_session_id',           $session_id);
+        $order->update_meta_data('_orangepill_wallet_applied',       (string) $applied_amount);
+        $order->update_meta_data('_orangepill_payment_status',       'succeeded');
+        $order->update_meta_data('_orangepill_payment_confirmed_at', current_time('mysql'));
+        $order->update_meta_data('_orangepill_channel',              'web');
+        $order->save();
+        $order->payment_complete();
+
+        OP_Logger::info(
+            'blocks_wallet_full_cover',
+            'Order #' . $order_id . ' fully covered by wallet (Blocks checkout)',
+            array(
+                'order_id'       => $order_id,
+                'session_id'     => $session_id,
+                'applied_amount' => $applied_amount,
+            )
+        );
+
+        return array('result' => 'success', 'redirect' => $this->get_return_url($order));
+    }
+
     private function process_native_payment($order, $intent_id) {
         $order_id      = $order->get_id();
         $execution_type = isset($_POST['_orangepill_execution_type'])
@@ -485,6 +565,20 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
         // Persist intent_id on order immediately so return handler can look it up
         $order->update_meta_data('_orangepill_intent_id', $intent_id);
         $order->update_meta_data('_orangepill_channel', 'web');
+
+        // PR-WC-BLOCKS-WALLET-V1: record partial wallet apply metadata if present.
+        $wallet_session_id     = isset($_POST['_orangepill_wallet_session_id'])
+            ? sanitize_text_field($_POST['_orangepill_wallet_session_id'])
+            : '';
+        $wallet_applied_amount = isset($_POST['_orangepill_wallet_applied_amount'])
+            ? (float) $_POST['_orangepill_wallet_applied_amount']
+            : 0.0;
+
+        if (!empty($wallet_session_id) && $wallet_applied_amount > 0) {
+            $order->update_meta_data('_orangepill_wallet_applied',     (string) $wallet_applied_amount);
+            $order->update_meta_data('_orangepill_wallet_session_id',  $wallet_session_id);
+        }
+
         $order->save();
 
         // Store in session as backup for return handler
@@ -869,6 +963,149 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
         wp_send_json_success(array(
             'intentId' => $result['id']     ?? $intent_id,
             'status'   => $result['status'] ?? '',
+        ));
+    }
+
+    /**
+     * AJAX: apply wallet balance to a temporary checkout session (Blocks checkout).
+     *
+     * PR-WC-BLOCKS-WALLET-V1 — 6th canonical AJAX endpoint.
+     * Logged-in only. Creates a checkout session, applies the wallet, and returns
+     * { sessionId, appliedAmount, remainingPayable }.
+     *
+     * For zero-payable (remainingPayable === 0): stores a verification transient so
+     * process_wallet_only_payment() can confirm the apply without trusting POST alone.
+     * Nonce: orangepill_apply_wallet (separate from main orangepill_wc_checkout nonce).
+     */
+    public function ajax_apply_wallet() {
+        check_ajax_referer('orangepill_apply_wallet', 'nonce');
+
+        if (!is_user_logged_in()) {
+            wp_send_json_error(array('message' => 'Login required'));
+            return;
+        }
+
+        $user_id     = get_current_user_id();
+        $customer_id = get_user_meta($user_id, '_orangepill_customer_id', true);
+
+        if (empty($customer_id)) {
+            wp_send_json_error(array('message' => 'No Orangepill customer account found'));
+            return;
+        }
+
+        $amount     = isset($_POST['amount'])     ? (float) $_POST['amount']                                   : 0.0;
+        $wallet_id  = isset($_POST['wallet_id'])  ? sanitize_text_field($_POST['wallet_id'])                   : '';
+        $cart_total = isset($_POST['cart_total']) ? (float) $_POST['cart_total']                               : 0.0;
+        $currency   = isset($_POST['currency'])   ? strtoupper(sanitize_text_field($_POST['currency']))        : '';
+
+        if ($amount <= 0 || $cart_total <= 0 || empty($currency)) {
+            wp_send_json_error(array('message' => 'amount, cart_total, and currency are required'));
+            return;
+        }
+
+        // Server-side cap: never trust browser-computed amount — re-fetch authoritative balance.
+        $loyalty   = new OP_Loyalty();
+        $wallet    = $loyalty->get_spendable_wallet_for_current_user();
+
+        if (!$wallet) {
+            wp_send_json_error(array('message' => 'No spendable wallet found'));
+            return;
+        }
+
+        $spendable = (float) ($wallet['spendable_balance'] ?? $wallet['balance'] ?? 0);
+        $amount    = min($amount, $spendable, $cart_total);
+
+        if ($amount <= 0) {
+            wp_send_json_error(array('message' => 'No spendable balance available'));
+            return;
+        }
+
+        // Validate wallet_id from request against live wallet list.
+        // Re-use OP_Loyalty's private logic by delegating through apply_wallet_to_session().
+        // Empty wallet_id = server will use the primary wallet (fallback in apply_wallet_to_session).
+        $api = new OP_API_Client();
+
+        // Create a temporary checkout session used solely as a wallet apply container.
+        // The native intent (created later by the JS) handles the remaining payment.
+        $session_params = array(
+            'integration_id'  => $this->get_option('integration_id'),
+            'merchant_id'     => $this->get_option('merchant_id'),
+            'amount'          => (string) $cart_total,
+            'currency'        => $currency,
+            'order_reference' => 'WC_WALLET_' . wp_generate_password(12, false),
+            'success_url'     => wc_get_checkout_url(),
+            'cancel_url'      => wc_get_checkout_url(),
+            'customer_id'     => $customer_id,
+        );
+
+        $session = $api->request('POST', '/v4/checkout/sessions', $session_params);
+
+        if (is_wp_error($session)) {
+            OP_Logger::error(
+                'blocks_wallet_session_create_failed',
+                'Failed to create session for Blocks wallet apply: ' . $session->get_error_message(),
+                array('customer_id' => $customer_id, 'amount' => $amount)
+            );
+            wp_send_json_error(array('message' => 'Unable to start wallet apply session'));
+            return;
+        }
+
+        $session_id    = $session['id']            ?? '';
+        $client_secret = $session['client_secret'] ?? '';
+
+        if (empty($session_id)) {
+            wp_send_json_error(array('message' => 'Session creation returned no ID'));
+            return;
+        }
+
+        $apply_result = $loyalty->apply_wallet_to_session(
+            $session_id, (string) $amount, $wallet_id, $client_secret
+        );
+
+        if (is_wp_error($apply_result)) {
+            OP_Logger::warning(
+                'blocks_wallet_apply_failed',
+                'Failed to apply wallet in Blocks flow: ' . $apply_result->get_error_message(),
+                array('session_id' => $session_id, 'amount' => $amount)
+            );
+            wp_send_json_error(array('message' => $apply_result->get_error_message()));
+            return;
+        }
+
+        $remaining_payable = (float) ($apply_result['remaining_amount'] ?? $apply_result['payable_amount'] ?? -1);
+        $applied_amount    = (float) ($apply_result['applied_amount']   ?? $amount);
+
+        // Invalidate wallet cache — balance just changed.
+        $loyalty->invalidate_wallet_cache($customer_id);
+
+        // Zero-payable: set verification transient consumed by process_wallet_only_payment().
+        // Keyed on server-generated session_id — tamper-resistant.
+        if ($remaining_payable === 0.0) {
+            set_transient(
+                'op_wallet_zero_payable_' . sanitize_key($session_id),
+                array(
+                    'customer_id'    => $customer_id,
+                    'applied_amount' => $applied_amount,
+                    'session_id'     => $session_id,
+                ),
+                60 * MINUTE_IN_SECONDS
+            );
+        }
+
+        OP_Logger::info(
+            'blocks_wallet_applied',
+            'Wallet applied in Blocks checkout (remaining: ' . $remaining_payable . ')',
+            array(
+                'session_id'        => $session_id,
+                'applied_amount'    => $applied_amount,
+                'remaining_payable' => $remaining_payable,
+            )
+        );
+
+        wp_send_json_success(array(
+            'sessionId'        => $session_id,
+            'appliedAmount'    => $applied_amount,
+            'remainingPayable' => $remaining_payable,
         ));
     }
 

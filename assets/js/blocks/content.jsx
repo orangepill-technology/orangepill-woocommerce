@@ -1,6 +1,6 @@
 /**
  * OrangepillContent — Blocks payment method content component.
- * (PR-WC-BLOCKS-COMPATIBILITY-V1)
+ * (PR-WC-BLOCKS-COMPATIBILITY-V1 / PR-WC-BLOCKS-WALLET-V1)
  *
  * Implements the same execution-type dispatch as native-payment-shell.js but
  * as a React component for WC Blocks checkout. WCBLOCKS-006 invariant: all 4
@@ -10,7 +10,9 @@
  * Flow (mirrors native-payment-shell.js):
  *   1. Mount  → load payment options via AJAX
  *   2. Submit → onPaymentSetup fires:
- *       a. createIntent  → POST /v4/payment-intents
+ *       W. [wallet] if walletApplied.remainingPayable === 0:
+ *           → pass _orangepill_wallet_only=true; PHP completes locally, no provider
+ *       a. createIntent for remaining amount (cartTotal − wallet applied, or full cartTotal)
  *       b. executeIntent → POST /v4/payment-intents/{id}/execute
  *          (server registers async callback = webhook safety net)
  *       c. Dispatch on execution_type:
@@ -20,18 +22,19 @@
  *          payment_request_required
  *                     → render QR/key inline, poll until succeeded, then pass as completed
  *
- * Server authority: process_payment() reads $_POST['_orangepill_intent_id'] and
- * $_POST['_orangepill_execution_type'] set by WC Blocks from paymentMethodData —
- * identical to the classic shortcode checkout submission. No PHP changes needed.
+ * Server authority: process_payment() reads $_POST fields set by WC Blocks from
+ * paymentMethodData — identical to classic shortcode checkout. PHP is unchanged
+ * for non-wallet flows; wallet-only path is a minimal new branch in process_payment().
  *
- * Wallet UI: deferred to PR-WC-BLOCKS-WALLET-V1. The wallet does not break; it
- * simply isn't surfaced in the Blocks UI in V1.
+ * Wallet: PR-WC-BLOCKS-WALLET-V1. Option A (display-only cart totals).
+ * Partial apply: intent created for remainingPayable. Zero-payable: no intent, wallet-only path.
  */
 
 import { useState, useEffect, useRef } from '@wordpress/element';
 import { decodeEntities } from '@wordpress/html-entities';
 import { PaymentMethodSelector } from './components/PaymentMethodSelector';
 import { QRCodeDisplay }         from './components/QRCodeDisplay';
+import { WalletSection }         from './components/WalletSection';
 import { getPaymentOptions, createIntent, executeIntent, pollPaymentStatus } from './api';
 
 const config = window.orangepillBlocksConfig || {};
@@ -50,12 +53,16 @@ export function OrangepillContent( { eventRegistration, emitResponse, billing } 
     const [ selectedChannel, setSelectedChannel ] = useState( null );
     const [ execState,      setExecState      ] = useState( 'idle' ); // idle | awaiting_qr | confirmed
     const [ paymentRequest, setPaymentRequest  ] = useState( null );
+    // walletApplied: null | { sessionId, appliedAmount, remainingPayable }
+    const [ walletApplied,  setWalletApplied  ] = useState( null );
 
     // Refs keep the onPaymentSetup closure current without re-registering it on every method change.
     const selectedMethodRef  = useRef( selectedMethod );
     const selectedChannelRef = useRef( selectedChannel );
+    const walletAppliedRef   = useRef( walletApplied );
     useEffect( () => { selectedMethodRef.current  = selectedMethod;  }, [ selectedMethod  ] );
     useEffect( () => { selectedChannelRef.current = selectedChannel; }, [ selectedChannel ] );
+    useEffect( () => { walletAppliedRef.current   = walletApplied;   }, [ walletApplied   ] );
 
     // Cart total — convert from WC Blocks minor units to major units used by the payment API.
     // e.g. COP: 438211 / 10^0 = 438211; USD: 438211 / 10^2 = 4382.11
@@ -100,8 +107,23 @@ export function OrangepillContent( { eventRegistration, emitResponse, billing } 
         if ( ! onPaymentEvent ) return;
 
         const unsubscribe = onPaymentEvent( async () => {
-            const methodKey = selectedMethodRef.current;
-            const channel   = selectedChannelRef.current;
+            const methodKey  = selectedMethodRef.current;
+            const channel    = selectedChannelRef.current;
+            const wa         = walletAppliedRef.current;
+
+            // ── Path W: wallet-only (zero-payable) ───────────────────────────
+            // Wallet covers 100% of order total — skip provider entirely.
+            // PHP process_payment() verifies via transient and completes locally.
+            if ( wa && wa.remainingPayable === 0 ) {
+                return {
+                    type: emitResponse.responseTypes.SUCCESS,
+                    meta: { paymentMethodData: {
+                        _orangepill_wallet_only:          'true',
+                        _orangepill_wallet_session_id:     wa.sessionId,
+                        _orangepill_wallet_applied_amount: String( wa.appliedAmount ),
+                    } },
+                };
+            }
 
             if ( ! methodKey ) {
                 return {
@@ -114,9 +136,13 @@ export function OrangepillContent( { eventRegistration, emitResponse, billing } 
             // mid-poll (e.g. user navigates away).
             const ac = new AbortController();
 
+            // Partial wallet apply: create intent for remaining amount only.
+            // Full amount if no wallet was applied.
+            const intentAmount = wa ? String( wa.remainingPayable ) : cartTotal;
+
             try {
-                // Step 1: create intent
-                const intentResult = await createIntent( methodKey, currency, cartTotal );
+                // Step 1: create intent (for remaining payable, or full total if no wallet)
+                const intentResult = await createIntent( methodKey, currency, intentAmount );
                 const intentId     = intentResult.intentId;
                 if ( ! intentId ) throw new Error( 'No intent ID returned' );
 
@@ -138,6 +164,10 @@ export function OrangepillContent( { eventRegistration, emitResponse, billing } 
                             meta: { paymentMethodData: {
                                 _orangepill_intent_id:      intentId,
                                 _orangepill_execution_type: 'redirect',
+                                ...( wa && {
+                                    _orangepill_wallet_session_id:     wa.sessionId,
+                                    _orangepill_wallet_applied_amount: String( wa.appliedAmount ),
+                                } ),
                             } },
                         };
 
@@ -150,6 +180,10 @@ export function OrangepillContent( { eventRegistration, emitResponse, billing } 
                             meta: { paymentMethodData: {
                                 _orangepill_intent_id:      intentId,
                                 _orangepill_execution_type: 'processing',
+                                ...( wa && {
+                                    _orangepill_wallet_session_id:     wa.sessionId,
+                                    _orangepill_wallet_applied_amount: String( wa.appliedAmount ),
+                                } ),
                             } },
                         };
 
@@ -161,6 +195,10 @@ export function OrangepillContent( { eventRegistration, emitResponse, billing } 
                             meta: { paymentMethodData: {
                                 _orangepill_intent_id:      intentId,
                                 _orangepill_execution_type: 'completed',
+                                ...( wa && {
+                                    _orangepill_wallet_session_id:     wa.sessionId,
+                                    _orangepill_wallet_applied_amount: String( wa.appliedAmount ),
+                                } ),
                             } },
                         };
 
@@ -186,6 +224,10 @@ export function OrangepillContent( { eventRegistration, emitResponse, billing } 
                                 meta: { paymentMethodData: {
                                     _orangepill_intent_id:      intentId,
                                     _orangepill_execution_type: 'completed',
+                                    ...( wa && {
+                                        _orangepill_wallet_session_id:     wa.sessionId,
+                                        _orangepill_wallet_applied_amount: String( wa.appliedAmount ),
+                                    } ),
                                 } },
                             };
                         }
@@ -267,9 +309,18 @@ export function OrangepillContent( { eventRegistration, emitResponse, billing } 
                 } }
             />
 
-            { /* Wallet balance display for logged-in users is deferred to
-                 PR-WC-BLOCKS-WALLET-V1. Classic shortcode checkout retains wallet UI.
-                 Guest and no-wallet-selection flows are unaffected in V1. */ }
+            { /* PR-WC-BLOCKS-WALLET-V1: Wallet apply UI (logged-in only).
+                 Option A (display-only cart totals) — WC cart store unchanged.
+                 Zero-payable: wallet-only path skips provider entirely.
+                 Partial apply: intent created for remainingPayable in onPaymentSetup. */ }
+            { config.isLoggedIn && config.wallet?.enabled && (
+                <WalletSection
+                    walletConfig={ config.wallet }
+                    cartTotal={ cartTotal }
+                    onApplied={ setWalletApplied }
+                    walletApplied={ walletApplied }
+                />
+            ) }
 
             { execState === 'awaiting_qr' && paymentRequest && (
                 <QRCodeDisplay
