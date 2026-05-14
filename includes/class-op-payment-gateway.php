@@ -152,6 +152,15 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
                 'placeholder' => WC()->api_request_url('orangepill-webhook'),
                 'desc_tip'    => false,
             ),
+            // PR-WC-WEBCHAT-IDENTITY-BINDING-V1: separate secret for identity tokens.
+            // Separate from webhook_secret so secrets can rotate independently.
+            'identity_secret' => array(
+                'title'       => __('Webchat Identity Secret', 'orangepill-wc'),
+                'type'        => 'password',
+                'description' => __('Shared secret for signing webchat identity tokens. Issued by Orangepill. Binds logged-in customers to their canonical identity in webchat conversations.', 'orangepill-wc'),
+                'default'     => '',
+                'desc_tip'    => false,
+            ),
         );
     }
 
