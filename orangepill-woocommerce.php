@@ -275,6 +275,11 @@ function orangepill_wc_mark_paid() {
 
 /**
  * Inject webchat widget script tag into the page footer when enabled.
+ *
+ * Currently injects anonymously — no identity binding to the logged-in WC user.
+ * Follow-up: PR-WC-WEBCHAT-IDENTITY-BINDING-V1 will add an HMAC identity token
+ * (signed by the shared webhook secret) so the widget can link the visitor to
+ * their Orangepill customer record and continue in-progress conversations.
  */
 function orangepill_wc_inject_webchat() {
     $settings = get_option('woocommerce_orangepill_settings', array());

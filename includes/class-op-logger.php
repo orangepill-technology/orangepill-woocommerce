@@ -17,9 +17,13 @@ class OP_Logger {
     const OPTION_NAME = 'orangepill_wc_sync_log';
 
     /**
-     * @var int Maximum number of log entries to keep
+     * Maximum entries kept in the WP option quick-view log.
+     *
+     * This is a lightweight rolling buffer for the admin log viewer.
+     * For long-term audit history, query wp_orangepill_sync_events
+     * via OP_Sync_Journal — that table is durable and unbounded.
      */
-    const MAX_ENTRIES = 50;
+    const MAX_ENTRIES = 200;
 
     /**
      * Log levels

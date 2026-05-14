@@ -312,6 +312,13 @@ class OP_Settings_Page {
                     />
                 </p>
             </form>
+
+            <div class="notice notice-info inline" style="margin-top: 20px;">
+                <p>
+                    <strong><?php esc_html_e('Known limitation — guest checkouts:', 'orangepill-wc'); ?></strong>
+                    <?php esc_html_e('Guest customers (not logged in) check out without an Orangepill customer record. Transactions complete normally, but guest orders carry no loyalty balance, wallet, or repeat-customer recognition on the Orangepill side. Logged-in customers are fully synced via external_id woo:{user_id}.', 'orangepill-wc'); ?>
+                </p>
+            </div>
         </div>
         <?php
     }
