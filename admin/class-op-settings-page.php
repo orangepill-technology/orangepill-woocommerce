@@ -27,6 +27,7 @@ class OP_Settings_Page {
     public function __construct() {
         add_action('wp_ajax_orangepill_test_connection', array($this, 'ajax_test_connection'));
         add_action('wp_ajax_orangepill_retry_webhook_registration', array($this, 'ajax_retry_webhook_registration'));
+        add_action('admin_notices', array($this, 'maybe_show_identity_secret_notice'));
     }
 
     /**
@@ -301,6 +302,24 @@ class OP_Settings_Page {
                             </p>
                         </td>
                     </tr>
+
+                    <tr>
+                        <th scope="row">
+                            <label for="identity_secret"><?php esc_html_e('Webchat Identity Secret', 'orangepill-wc'); ?></label>
+                        </th>
+                        <td>
+                            <input
+                                type="password"
+                                name="identity_secret"
+                                id="identity_secret"
+                                value="<?php echo esc_attr($settings['identity_secret'] ?? ''); ?>"
+                                class="regular-text"
+                            />
+                            <p class="description">
+                                <?php esc_html_e('Shared HMAC-SHA256 secret for signing webchat identity tokens. Must match the value configured on the Orangepill platform. Never exposed to JavaScript — PHP-only. Leave empty to disable identity binding (widget still loads for all visitors).', 'orangepill-wc'); ?>
+                            </p>
+                        </td>
+                    </tr>
                 </table>
 
                 <p class="submit">
@@ -426,6 +445,7 @@ class OP_Settings_Page {
             'webchat_enabled'       => isset($_POST['webchat_enabled']) ? 'yes' : 'no',
             'webchat_entrypoint_id' => sanitize_text_field($_POST['webchat_entrypoint_id'] ?? '679625a3-7ce0-41be-8c11-ca60e83d473a'),
             'webchat_embed_url'     => esc_url_raw($_POST['webchat_embed_url'] ?? 'http://localhost:5200/webchat/embed.js'),
+            'identity_secret'       => sanitize_text_field($_POST['identity_secret'] ?? ''),
         );
 
         if (!empty($settings['webhook_secret']) && strlen($settings['webhook_secret']) < 8) {
@@ -478,6 +498,39 @@ class OP_Settings_Page {
         }
 
         return $warnings;
+    }
+
+    /**
+     * Admin notice: webchat is enabled but identity_secret is not configured.
+     *
+     * Shown once per page load on WP admin screens only. Dismissible per session.
+     * WCIDENT-011 prerequisite: surface the gap so merchants know identity binding
+     * is inactive — widget still loads; this notice is informational only.
+     */
+    public function maybe_show_identity_secret_notice() {
+        if (!current_user_can('manage_woocommerce')) {
+            return;
+        }
+
+        $settings = get_option('woocommerce_orangepill_settings', array());
+
+        if (
+            ( $settings['webchat_enabled'] ?? 'no' ) !== 'yes' ||
+            ! empty( $settings['identity_secret'] )
+        ) {
+            return;
+        }
+
+        $settings_url = admin_url('admin.php?page=orangepill-settings');
+        echo '<div class="notice notice-warning is-dismissible">';
+        echo '<p>';
+        printf(
+            /* translators: %s: settings page URL */
+            esc_html__('Orangepill Webchat is enabled but no Identity Secret is configured. Logged-in customers will not be bound to their Orangepill profiles in chat. %s', 'orangepill-wc'),
+            '<a href="' . esc_url($settings_url) . '">' . esc_html__('Configure the Webchat Identity Secret →', 'orangepill-wc') . '</a>'
+        );
+        echo '</p>';
+        echo '</div>';
     }
 
     /**

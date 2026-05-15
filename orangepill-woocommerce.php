@@ -153,8 +153,10 @@ function orangepill_wc_init() {
     // Enqueue frontend checkout assets
     add_action('wp_enqueue_scripts', 'orangepill_wc_enqueue_checkout_assets');
 
-    // Webchat widget injection
+    // Webchat widget injection + identity token refresh endpoint (PR-WC-WEBCHAT-IDENTITY-BINDING-V1)
     add_action('wp_footer', 'orangepill_wc_inject_webchat');
+    // No nopriv variant — refresh requires login (WCIDENT-006)
+    add_action('wp_ajax_orangepill_refresh_identity_token', array('OP_Webchat_Identity', 'handle_refresh_request'));
 
     // Admin: manual "Mark as Paid" action (reconciliation — not polling)
     add_action('admin_post_orangepill_mark_paid', 'orangepill_wc_mark_paid');
@@ -276,10 +278,15 @@ function orangepill_wc_mark_paid() {
 /**
  * Inject webchat widget script tag into the page footer when enabled.
  *
- * Currently injects anonymously — no identity binding to the logged-in WC user.
- * Follow-up: PR-WC-WEBCHAT-IDENTITY-BINDING-V1 will add an HMAC identity token
- * (signed by the shared webhook secret) so the widget can link the visitor to
- * their Orangepill customer record and continue in-progress conversations.
+ * For logged-in users with identity_secret configured, adds:
+ *   data-identity-token  — HMAC-signed token (OP_Webchat_Identity, PR-WC-WEBCHAT-IDENTITY-BINDING-V1)
+ *   data-refresh-url     — AJAX endpoint for token refresh on long-lived sessions
+ *   data-refresh-nonce   — WP nonce for the refresh call
+ *
+ * Graceful degradation (RULE 2 — additive only):
+ *   - Guest visitors: widget loads without identity attributes (anonymous flow unchanged)
+ *   - identity_secret not configured: widget loads without identity attributes, admin notified
+ *   - Token generation fails: widget loads without identity attributes, error logged
  */
 function orangepill_wc_inject_webchat() {
     $settings = get_option('woocommerce_orangepill_settings', array());
@@ -295,7 +302,29 @@ function orangepill_wc_inject_webchat() {
         return;
     }
 
-    echo '<script src="' . esc_url($embed_url) . '" data-entrypoint-id="' . esc_attr($entrypoint_id) . '"></script>' . "\n";
+    // Identity token — null for guests or missing config (anonymous flow preserved).
+    // The signing secret is NEVER passed to JS; only the derived token is.
+    $identity_token = OP_Webchat_Identity::generate_token_for_current_user();
+
+    $token_attr   = '';
+    $refresh_attr = '';
+
+    if ($identity_token !== null) {
+        $token_attr = ' data-identity-token="' . esc_attr($identity_token) . '"';
+
+        // Refresh endpoint so the widget can re-issue a token for long-lived sessions.
+        $refresh_url   = admin_url('admin-ajax.php');
+        $refresh_nonce = wp_create_nonce('orangepill_refresh_identity_token');
+        $refresh_attr  = ' data-refresh-url="' . esc_url($refresh_url) . '"'
+            . ' data-refresh-nonce="' . esc_attr($refresh_nonce) . '"';
+    }
+
+    // Widget always loads — identity binding is additive, never blocking.
+    echo '<script src="' . esc_url($embed_url) . '"'
+        . ' data-entrypoint-id="' . esc_attr($entrypoint_id) . '"'
+        . $token_attr
+        . $refresh_attr
+        . '></script>' . "\n";
 }
 
 /**
