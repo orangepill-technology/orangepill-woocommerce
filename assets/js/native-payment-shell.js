@@ -276,8 +276,10 @@
         var html = '<div class="op-payment-request" data-payment-id="' + esc(paymentId) + '">';
 
         if (mode === 'dynamic_qr' && rendering.qr_image_base64) {
+            var qrRaw = rendering.qr_image_base64;
+            var qrSrc = (qrRaw.indexOf('data:') === 0) ? qrRaw : 'data:image/png;base64,' + qrRaw;
             html += '<div class="op-pr-qr">';
-            html += '<img src="data:image/png;base64,' + escHtml(rendering.qr_image_base64) + '" alt="QR de pago" class="op-qr-image" />';
+            html += '<img src="' + escHtml(qrSrc) + '" alt="QR de pago" class="op-qr-image" />';
             html += '</div>';
         }
 
