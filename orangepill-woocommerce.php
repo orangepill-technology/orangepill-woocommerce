@@ -158,6 +158,10 @@ function orangepill_wc_init() {
     // No nopriv variant — refresh requires login (WCIDENT-006)
     add_action('wp_ajax_orangepill_refresh_identity_token', array('OP_Webchat_Identity', 'handle_refresh_request'));
 
+    // PR-WC-WEBCHAT-CONVERSATION-LINKING-V1: order metabox (admin) + conversation helper (checkout)
+    $order_metabox = new OP_Order_Metabox();
+    $order_metabox->register();
+
     // Admin: manual "Mark as Paid" action (reconciliation — not polling)
     add_action('admin_post_orangepill_mark_paid', 'orangepill_wc_mark_paid');
 
@@ -364,6 +368,17 @@ function orangepill_wc_enqueue_checkout_assets() {
         ),
     ));
 
+    // PR-WC-WEBCHAT-CONVERSATION-LINKING-V1: conversation ID helper for classic checkout.
+    // Loaded before native-payment-shell.js so the global is available immediately.
+    // Blocks checkout uses the ES module mirror (assets/js/blocks/conversation-helper.js).
+    wp_enqueue_script(
+        'orangepill-conversation-helper',
+        ORANGEPILL_WC_PLUGIN_URL . 'assets/js/conversation-helper.js',
+        array(),
+        ORANGEPILL_WC_VERSION,
+        true
+    );
+
     // Native payment shell (PR-WC-NATIVE-CHECKOUT-1)
     wp_enqueue_style(
         'orangepill-wc-native-shell',
@@ -375,7 +390,7 @@ function orangepill_wc_enqueue_checkout_assets() {
     wp_enqueue_script(
         'orangepill-wc-native-shell',
         ORANGEPILL_WC_PLUGIN_URL . 'assets/js/native-payment-shell.js',
-        array('jquery'),
+        array('jquery', 'orangepill-conversation-helper'),
         ORANGEPILL_WC_VERSION,
         true
     );

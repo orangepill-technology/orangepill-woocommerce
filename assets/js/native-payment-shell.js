@@ -53,6 +53,14 @@
             if ($(this).is(':checked')) loadPaymentOptions();
         });
 
+        // PR-WC-WEBCHAT-CONVERSATION-LINKING-V1: populate hidden conversation field
+        // at checkout load for classic hosted path (Path B — form submits directly).
+        // Path A (native) overwrites this in handlePayment() with a fresh read.
+        setHiddenField(
+            '_orangepill_conversation_id',
+            getConversationId()
+        );
+
         $('form.checkout').on('checkout_place_order_orangepill', function () {
             if (state.intentSubmitted) {
                 state.intentSubmitted = false;
@@ -173,17 +181,25 @@
         var currency = $shell.data('currency');
         var amount   = $shell.data('amount');
 
+        // PR-WC-WEBCHAT-CONVERSATION-LINKING-V1: capture at order-creation time (RULE 4).
+        // Returns null when widget not loaded or no active conversation — never throws.
+        var conversationId = getConversationId();
+
+        // Persist in form so process_payment() can store on the WC order (all paths).
+        setHiddenField('_orangepill_conversation_id', conversationId);
+
         setShellState('placing', i18n.creating_payment);
 
         $.ajax({
             url:    AJAX_URL,
             method: 'POST',
             data: {
-                action:     'orangepill_create_intent',
-                nonce:      NONCE,
-                method_key: methodKey,
-                currency:   currency,
-                amount:     amount,
+                action:          'orangepill_create_intent',
+                nonce:           NONCE,
+                method_key:      methodKey,
+                currency:        currency,
+                amount:          amount,
+                conversation_id: conversationId, // platform associates intent with conversation
             },
             success: function (response) {
                 if (!response.success) {
@@ -459,6 +475,17 @@
                 '<p class="op-no-methods">' + escHtml(i18n.no_methods) + '</p>'
             );
         }
+    }
+
+    // ─── Conversation helper ──────────────────────────────────────────────────
+
+    // Thin wrapper — delegates to conversation-helper.js global (loaded first).
+    // Returns null if helper not loaded or widget not available.
+    function getConversationId() {
+        return ( window.OrangepillConversationHelper &&
+            typeof window.OrangepillConversationHelper.getActiveConversationId === 'function' )
+            ? window.OrangepillConversationHelper.getActiveConversationId()
+            : null;
     }
 
     // ─── DOM helpers ──────────────────────────────────────────────────────────

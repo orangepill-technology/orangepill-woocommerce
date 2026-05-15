@@ -73,9 +73,18 @@ class OP_External_Order_Sync {
         $payload = $this->build_payload($order, $integration_id, $merchant_id);
         $url     = $base_url . '/v4/external-orders/woocommerce';
 
-        wp_remote_post($url, array(
-            'blocking' => false,
-            'timeout'  => 5,
+        // PR-WC-WEBCHAT-CONVERSATION-LINKING-V1: attribution verification.
+        // When conversation_id is present AND attribution status not yet determined,
+        // use a blocking request to get the platform's identity-match outcome.
+        // After the first attribution response, subsequent pushes revert to fire-and-forget.
+        // Per RULE 2: attribution failures never surface to the customer — silent.
+        $conversation_id    = $order->get_meta('_orangepill_conversation_id', true);
+        $attribution_status = $order->get_meta('_orangepill_conversation_attribution_status', true);
+        $need_attribution   = !empty($conversation_id) && empty($attribution_status);
+
+        $response = wp_remote_post($url, array(
+            'blocking' => $need_attribution,
+            'timeout'  => $need_attribution ? 15 : 5,
             'headers'  => array(
                 'Authorization' => 'Bearer ' . $api_key,
                 'Content-Type'  => 'application/json',
@@ -84,13 +93,45 @@ class OP_External_Order_Sync {
             'body'     => wp_json_encode($payload),
         ));
 
+        // Store attribution outcome when the platform responds (blocking path only).
+        // Canonical rejection reasons: conversation_not_found | customer_mismatch | conversation_anonymous.
+        // Per RULE 6: verification status stored visibly so operators can investigate.
+        if ($need_attribution && !is_wp_error($response)) {
+            $code = wp_remote_retrieve_response_code($response);
+            if ($code >= 200 && $code < 300) {
+                $body = json_decode(wp_remote_retrieve_body($response), true);
+                if (!empty($body['conversation_attribution'])) {
+                    $attr   = $body['conversation_attribution'];
+                    $status = sanitize_text_field($attr['status'] ?? 'none');
+                    update_post_meta($order->get_id(), '_orangepill_conversation_attribution_status', $status);
+                    if (!empty($attr['reason'])) {
+                        $reason = sanitize_text_field($attr['reason']);
+                        update_post_meta($order->get_id(), '_orangepill_conversation_attribution_reason', $reason);
+                    }
+
+                    OP_Logger::info(
+                        'conversation_attribution_received',
+                        'Conversation attribution: ' . $status,
+                        array(
+                            'order_id'        => $order->get_id(),
+                            'conversation_id' => $conversation_id,
+                            'status'          => $status,
+                            'reason'          => $attr['reason'] ?? '',
+                        )
+                    );
+                }
+            }
+        }
+
         OP_Logger::info(
             'external_order_pushed',
-            'Order #' . $order->get_id() . ' pushed to external-orders API (fire-and-forget)',
+            'Order #' . $order->get_id() . ' pushed to external-orders API'
+                . ( $need_attribution ? ' (blocking — attribution check)' : ' (fire-and-forget)' ),
             array(
-                'order_id' => $order->get_id(),
-                'status'   => $order->get_status(),
-                'url'      => $url,
+                'order_id'          => $order->get_id(),
+                'status'            => $order->get_status(),
+                'url'               => $url,
+                'has_conversation'  => !empty($conversation_id),
             )
         );
     }
@@ -132,8 +173,10 @@ class OP_External_Order_Sync {
         $op_customer_id = $user_id ? get_user_meta($user_id, '_orangepill_customer_id', true) : null;
         $op_session_id  = $order->get_meta('_orangepill_session_id', true);
         $op_payment_id  = $order->get_meta('_orangepill_payment_id', true);
+        // PR-WC-WEBCHAT-CONVERSATION-LINKING-V1: conversation attribution claim.
+        $op_conv_id     = $order->get_meta('_orangepill_conversation_id', true);
 
-        return array(
+        $payload = array(
             'externalOrderId'  => (string) $order->get_id(),
             'integrationId'    => $integration_id,
             'externalStatus'   => $order->get_status(),
@@ -184,5 +227,13 @@ class OP_External_Order_Sync {
                 'orangepill_payment_id' => $op_payment_id ?: null,
             ),
         );
+
+        // PR-WC-WEBCHAT-CONVERSATION-LINKING-V1: include conversation claim (top-level).
+        // Platform verifies via canonical customer match — not trusted by plugin.
+        if (!empty($op_conv_id)) {
+            $payload['conversation_id'] = $op_conv_id;
+        }
+
+        return $payload;
     }
 }
