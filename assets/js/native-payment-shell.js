@@ -17,9 +17,11 @@
 (function ($) {
     'use strict';
 
-    var AJAX_URL = orangepillNative.ajax_url;
-    var NONCE    = orangepillNative.nonce;
-    var i18n     = orangepillNative.i18n;
+    var AJAX_URL           = orangepillNative.ajax_url;
+    var NONCE              = orangepillNative.nonce;
+    var i18n               = orangepillNative.i18n;
+    var WOMPI_PUBLIC_KEY   = orangepillNative.wompi_public_key   || '';
+    var WOMPI_TOKENIZE_URL = orangepillNative.wompi_tokenize_url || '';
 
     var state = {
         selectedMethodKey: null,
@@ -165,50 +167,233 @@
         state.selectedMethodKey = $first.val();
         state.selectedChannel   = $first.data('channel') || null;
         $first.closest('.op-method-item').addClass('op-method-selected');
+        renderSubForm(state.selectedMethodKey, $shell);
 
         $shell.on('change', '.op-method-radio', function () {
             state.selectedMethodKey = $(this).val();
             state.selectedChannel   = $(this).data('channel') || null;
             $shell.find('.op-method-item').removeClass('op-method-selected');
             $(this).closest('.op-method-item').addClass('op-method-selected');
+            renderSubForm(state.selectedMethodKey, $shell);
         });
+    }
+
+    // ─── Method sub-forms ─────────────────────────────────────────────────────
+
+    function renderSubForm(methodKey, $shell) {
+        $shell.find('.op-subform').remove();
+
+        if (methodKey === 'wallet.nequi') {
+            $shell.find('.op-methods-list').after(
+                '<div class="op-subform op-subform-nequi">' +
+                '<p class="op-subform-desc">' + escHtml(i18n.nequi_desc || 'Ingresa el número de celular registrado en Nequi.') + '</p>' +
+                '<label class="op-subform-label">' + escHtml(i18n.phone_number || 'Número de celular') + '</label>' +
+                '<input type="tel" class="op-subform-phone input-text" placeholder="3001234567" maxlength="10" autocomplete="tel-national">' +
+                '<span class="op-subform-error"></span>' +
+                '</div>'
+            );
+
+        } else if (methodKey === 'wallet.daviplata') {
+            $shell.find('.op-methods-list').after(
+                '<div class="op-subform op-subform-daviplata">' +
+                '<p class="op-subform-desc">' + escHtml(i18n.daviplata_desc || 'Ingresa los datos de tu cuenta Daviplata.') + '</p>' +
+                '<label class="op-subform-label">' + escHtml(i18n.phone_number || 'Número de celular') + '</label>' +
+                '<input type="tel" class="op-subform-phone input-text" placeholder="3001234567" maxlength="10" autocomplete="tel-national">' +
+                '<label class="op-subform-label">' + escHtml(i18n.id_type || 'Tipo de documento') + '</label>' +
+                '<select class="op-subform-id-type">' +
+                '<option value="CC">Cédula de ciudadanía (CC)</option>' +
+                '<option value="CE">Cédula de extranjería (CE)</option>' +
+                '<option value="NIT">NIT</option>' +
+                '<option value="PP">Pasaporte (PP)</option>' +
+                '<option value="SSN">SSN</option>' +
+                '<option value="LIC">Licencia (LIC)</option>' +
+                '<option value="NIP">NIP</option>' +
+                '</select>' +
+                '<label class="op-subform-label">' + escHtml(i18n.id_number || 'Número de documento') + '</label>' +
+                '<input type="text" class="op-subform-id-num input-text" placeholder="1234567890" autocomplete="off">' +
+                '<span class="op-subform-error"></span>' +
+                '</div>'
+            );
+
+        } else if (methodKey === 'card') {
+            $shell.find('.op-methods-list').after(
+                '<div class="op-subform op-subform-card">' +
+                '<p class="op-subform-desc">' + escHtml(i18n.card_desc || 'Tus datos de tarjeta van directamente a Wompi.') + '</p>' +
+                '<label class="op-subform-label">' + escHtml(i18n.card_number || 'Número de tarjeta') + '</label>' +
+                '<input type="text" class="op-subform-card-num input-text" placeholder="1234 5678 9012 3456" maxlength="19" autocomplete="cc-number" inputmode="numeric">' +
+                '<div class="op-subform-row">' +
+                '<div class="op-subform-col">' +
+                '<label class="op-subform-label">' + escHtml(i18n.card_expiry || 'Vencimiento (MM/AA)') + '</label>' +
+                '<input type="text" class="op-subform-expiry input-text" placeholder="MM/AA" maxlength="5" autocomplete="cc-exp">' +
+                '</div>' +
+                '<div class="op-subform-col">' +
+                '<label class="op-subform-label">CVC</label>' +
+                '<input type="text" class="op-subform-cvc input-text" placeholder="123" maxlength="4" autocomplete="cc-csc" inputmode="numeric">' +
+                '</div>' +
+                '</div>' +
+                '<label class="op-subform-label">' + escHtml(i18n.card_holder || 'Nombre del titular') + '</label>' +
+                '<input type="text" class="op-subform-holder input-text" placeholder="Juan Pérez" autocomplete="cc-name">' +
+                '<span class="op-subform-error"></span>' +
+                '</div>'
+            );
+        }
+    }
+
+    function collectSubFormData(methodKey, $shell) {
+        var $sub = $shell.find('.op-subform');
+        var $err = $sub.find('.op-subform-error').hide().text('');
+
+        if (methodKey === 'wallet.nequi') {
+            var phone = $sub.find('.op-subform-phone').val().replace(/\D/g, '');
+            if (phone.length !== 10) {
+                $err.text(i18n.nequi_phone_error || 'Ingresa un número colombiano de 10 dígitos (ej. 3001234567)').show();
+                return null;
+            }
+            return { phone_number: phone };
+        }
+
+        if (methodKey === 'wallet.daviplata') {
+            var phone   = $sub.find('.op-subform-phone').val().replace(/\D/g, '');
+            var idType  = $sub.find('.op-subform-id-type').val();
+            var idNum   = $sub.find('.op-subform-id-num').val().replace(/\s/g, '');
+            if (phone.length !== 10) {
+                $err.text(i18n.daviplata_phone_error || 'Ingresa un número colombiano de 10 dígitos').show();
+                return null;
+            }
+            if (!idNum) {
+                $err.text(i18n.daviplata_id_error || 'Ingresa tu número de documento').show();
+                return null;
+            }
+            return { phone_number: phone, user_legal_id_type: idType, user_legal_id: idNum };
+        }
+
+        return {}; // no extra data required for this method
     }
 
     // ─── Payment execution ─────────────────────────────────────────────────────
 
     function handlePayment(methodKey, channel) {
-        var $shell   = $('#orangepill-native-shell');
-        var currency = $shell.data('currency');
-        var amount   = $shell.data('amount');
+        var $shell = $('#orangepill-native-shell');
 
-        // PR-WC-WEBCHAT-CONVERSATION-LINKING-V1: capture at order-creation time (RULE 4).
-        // Returns null when widget not loaded or no active conversation — never throws.
+        // Validate sub-form data for methods that require it.
+        // Returns null on failure (error shown inline) — reset state and bail.
+        var subData = collectSubFormData(methodKey, $shell);
+        if (subData === null) {
+            state.isPlacing = false;
+            $('form.checkout').unblock();
+            $('.woocommerce-checkout-review-order-table').unblock();
+            return;
+        }
+
         var conversationId = getConversationId();
-
-        // Persist in form so process_payment() can store on the WC order (all paths).
         setHiddenField('_orangepill_conversation_id', conversationId);
 
+        // Card: tokenize browser-side with Wompi public key before create_intent.
+        // The Wompi token (payment_method_id) is the only thing that reaches our server —
+        // raw card data (PAN, CVC) never leaves the browser.
+        if (methodKey === 'card') {
+            setShellState('placing', i18n.tokenizing_card || 'Verificando tarjeta...');
+            tokenizeCard($shell, function (tokenId, tokenErr) {
+                if (!tokenId) {
+                    if (tokenErr) { return; } // inline error already shown
+                    handlePaymentError(i18n.card_error || 'Error al verificar la tarjeta.');
+                    return;
+                }
+                doCreateIntent(methodKey, { payment_method_id: tokenId }, conversationId, $shell);
+            });
+            return;
+        }
+
+        doCreateIntent(methodKey, subData, conversationId, $shell);
+    }
+
+    function doCreateIntent(methodKey, extraData, conversationId, $shell) {
         setShellState('placing', i18n.creating_payment);
+
+        var postData = {
+            action:          'orangepill_create_intent',
+            nonce:           NONCE,
+            method_key:      methodKey,
+            currency:        $shell.data('currency'),
+            amount:          $shell.data('amount'),
+            conversation_id: conversationId,
+        };
+
+        if (extraData.phone_number)       postData.phone_number       = extraData.phone_number;
+        if (extraData.user_legal_id_type) postData.user_legal_id_type = extraData.user_legal_id_type;
+        if (extraData.user_legal_id)      postData.user_legal_id      = extraData.user_legal_id;
+        if (extraData.payment_method_id)  postData.payment_method_id  = extraData.payment_method_id;
 
         $.ajax({
             url:    AJAX_URL,
             method: 'POST',
-            data: {
-                action:          'orangepill_create_intent',
-                nonce:           NONCE,
-                method_key:      methodKey,
-                currency:        currency,
-                amount:          amount,
-                conversation_id: conversationId, // platform associates intent with conversation
-            },
+            data:   postData,
             success: function (response) {
                 if (!response.success) {
                     handlePaymentError((response.data && response.data.message) || i18n.payment_error);
                     return;
                 }
-                executeIntent(response.data.intentId, methodKey, channel);
+                // Channel is overridden server-side for wallet/card; passing state.selectedChannel
+                // here is a no-op for those — the PHP enforce logic takes precedence.
+                executeIntent(response.data.intentId, methodKey, state.selectedChannel);
             },
             error: function () { handlePaymentError(i18n.payment_error); },
+        });
+    }
+
+    function tokenizeCard($shell, callback) {
+        if (!WOMPI_TOKENIZE_URL || !WOMPI_PUBLIC_KEY) {
+            var $err = $shell.find('.op-subform-card .op-subform-error');
+            $err.text(i18n.card_not_configured || 'Pago con tarjeta no configurado.').show();
+            callback(null, true); // true = inline error shown, no generic toast
+            return;
+        }
+
+        var $sub     = $shell.find('.op-subform-card');
+        var $err     = $sub.find('.op-subform-error').hide().text('');
+        var rawNum   = $sub.find('.op-subform-card-num').val().replace(/[\s\-]/g, '');
+        var rawExp   = $sub.find('.op-subform-expiry').val().trim();
+        var cvc      = $sub.find('.op-subform-cvc').val().trim();
+        var holder   = $sub.find('.op-subform-holder').val().trim();
+        var parts    = rawExp.split('/');
+        var expMonth = (parts[0] || '').trim();
+        var expYear  = (parts[1] || '').trim();
+
+        if (rawNum.length < 13 || !/^\d+$/.test(rawNum)) {
+            $err.text(i18n.card_number_invalid || 'Número de tarjeta inválido').show();
+            callback(null, true); return;
+        }
+        if (expMonth.length !== 2 || expYear.length !== 2 || !/^\d{2}$/.test(expMonth) || !/^\d{2}$/.test(expYear)) {
+            $err.text(i18n.card_expiry_invalid || 'Fecha inválida — usa el formato MM/AA').show();
+            callback(null, true); return;
+        }
+        if (!cvc || cvc.length < 3) {
+            $err.text(i18n.card_cvc_invalid || 'CVC inválido').show();
+            callback(null, true); return;
+        }
+        if (!holder) {
+            $err.text(i18n.card_holder_invalid || 'Ingresa el nombre del titular').show();
+            callback(null, true); return;
+        }
+
+        fetch(WOMPI_TOKENIZE_URL, {
+            method:  'POST',
+            headers: { 'Authorization': 'Bearer ' + WOMPI_PUBLIC_KEY, 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ number: rawNum, cvc: cvc, exp_month: expMonth, exp_year: expYear, card_holder: holder }),
+        })
+        .then(function (res) { return res.json(); })
+        .then(function (json) {
+            var tokenId = json && json.data && json.data.id;
+            if (tokenId) {
+                callback(tokenId, null);
+            } else {
+                var errMsg = (json && json.error && json.error.reason) || '';
+                $err.text(errMsg || i18n.card_error || 'Error al verificar la tarjeta.').show();
+                callback(null, true);
+            }
+        })
+        .catch(function () {
+            callback(null, false); // generic toast
         });
     }
 
@@ -276,8 +461,10 @@
         var html = '<div class="op-payment-request" data-payment-id="' + esc(paymentId) + '">';
 
         if (mode === 'dynamic_qr' && rendering.qr_image_base64) {
+            var qrRaw = rendering.qr_image_base64;
+            var qrSrc = (qrRaw.indexOf('data:') === 0) ? qrRaw : 'data:image/png;base64,' + qrRaw;
             html += '<div class="op-pr-qr">';
-            html += '<img src="data:image/png;base64,' + escHtml(rendering.qr_image_base64) + '" alt="QR de pago" class="op-qr-image" />';
+            html += '<img src="' + escHtml(qrSrc) + '" alt="QR de pago" class="op-qr-image" />';
             html += '</div>';
         }
 

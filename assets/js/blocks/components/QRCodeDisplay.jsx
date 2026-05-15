@@ -66,7 +66,9 @@ export function QRCodeDisplay( { paymentRequest, onExpired } ) {
             { mode === 'dynamic_qr' && rendering.qr_image_base64 && (
                 <div className="op-pr-qr">
                     <img
-                        src={ `data:image/png;base64,${ rendering.qr_image_base64 }` }
+                        src={ rendering.qr_image_base64.startsWith( 'data:' )
+                            ? rendering.qr_image_base64
+                            : `data:image/png;base64,${ rendering.qr_image_base64 }` }
                         alt="QR de pago"
                         className="op-qr-image"
                     />

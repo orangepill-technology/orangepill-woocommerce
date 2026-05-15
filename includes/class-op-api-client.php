@@ -337,12 +337,21 @@ class OP_API_Client {
 
         $response = wp_remote_request($url, $args);
 
+        $logged_headers = $headers;
+        if (isset($logged_headers['Authorization'])) {
+            $logged_headers['Authorization'] = 'Bearer [REDACTED]';
+        }
+
         if (is_wp_error($response)) {
-            // Redact API key from error message
             $error_message = $this->redact_sensitive_data($response->get_error_message());
             return new WP_Error(
                 $response->get_error_code(),
-                $error_message
+                $error_message,
+                array(
+                    'request_url'     => $url,
+                    'request_method'  => $method,
+                    'request_headers' => $logged_headers,
+                )
             );
         }
 
@@ -356,7 +365,13 @@ class OP_API_Client {
             return new WP_Error(
                 'api_error',
                 $error_message,
-                array('status_code' => $status_code, 'response' => $decoded)
+                array(
+                    'status_code'     => $status_code,
+                    'response'        => $decoded,
+                    'request_url'     => $url,
+                    'request_method'  => $method,
+                    'request_headers' => $logged_headers,
+                )
             );
         }
 
