@@ -190,8 +190,11 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
             . '</div>';
 
         // Hidden fields written by native-payment-shell.js; read by process_payment()
-        echo '<input type="hidden" name="_orangepill_intent_id"       id="op_intent_id"       value="" />';
-        echo '<input type="hidden" name="_orangepill_execution_type"  id="op_execution_type"  value="" />';
+        echo '<input type="hidden" name="_orangepill_intent_id"        id="op_intent_id"        value="" />';
+        echo '<input type="hidden" name="_orangepill_execution_type"   id="op_execution_type"   value="" />';
+        // PR-WC-WEBCHAT-CONVERSATION-LINKING-V1: populated by conversation-helper.js.
+        // Claim only — platform verifies via canonical customer identity match (ADR-100).
+        echo '<input type="hidden" name="_orangepill_conversation_id"  id="op_conversation_id"  value="" />';
 
         if (is_user_logged_in()) {
             echo '<div id="orangepill-wallet-widget" style="margin-top:12px;" data-loading="1">';
@@ -279,6 +282,11 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
             // ─── Part 3: Checkout session creation ─────────────────────────
             $api = new OP_API_Client();
 
+            // PR-WC-WEBCHAT-CONVERSATION-LINKING-V1: capture conversation claim for Path B.
+            $path_b_conversation_id = isset($_POST['_orangepill_conversation_id'])
+                ? sanitize_text_field(wp_unslash($_POST['_orangepill_conversation_id']))
+                : '';
+
             $session_params = array(
                 'integration_id'  => $this->get_option('integration_id'),
                 'merchant_id'     => $this->get_option('merchant_id'),
@@ -292,6 +300,10 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
                     'woo_order_id' => (string) $order_id,
                 ),
             );
+
+            if (!empty($path_b_conversation_id)) {
+                $session_params['conversation_id'] = $path_b_conversation_id;
+            }
 
             // Determine webhook delivery path and log it for operator visibility.
             // Integration-level webhook = PRIMARY (registered once on settings save).
@@ -453,6 +465,16 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
             if ($customer_id) {
                 $order->update_meta_data('_orangepill_customer_id', $customer_id);
             }
+
+            // PR-WC-WEBCHAT-CONVERSATION-LINKING-V1: store conversation ID claim (Path B).
+            // Set in hidden field by conversation-helper.js when checkout page loaded.
+            $hosted_conversation_id = isset($_POST['_orangepill_conversation_id'])
+                ? sanitize_text_field(wp_unslash($_POST['_orangepill_conversation_id']))
+                : '';
+            if (!empty($hosted_conversation_id)) {
+                $order->update_meta_data('_orangepill_conversation_id', $hosted_conversation_id);
+            }
+
             $order->save();
 
             OP_Logger::info(
@@ -549,6 +571,19 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
         $order->update_meta_data('_orangepill_payment_status',       'succeeded');
         $order->update_meta_data('_orangepill_payment_confirmed_at', current_time('mysql'));
         $order->update_meta_data('_orangepill_channel',              'web');
+
+        // PR-WC-WEBCHAT-CONVERSATION-LINKING-V1: conversation ID from paymentMethodData
+        // (Blocks wallet-only path passes it directly). Also available in transient as fallback.
+        $conversation_id_post = isset($_POST['_orangepill_conversation_id'])
+            ? sanitize_text_field(wp_unslash($_POST['_orangepill_conversation_id']))
+            : '';
+        $conversation_id = !empty($conversation_id_post)
+            ? $conversation_id_post
+            : ($verification['conversation_id'] ?? '');
+        if (!empty($conversation_id)) {
+            $order->update_meta_data('_orangepill_conversation_id', $conversation_id);
+        }
+
         $order->save();
         $order->payment_complete();
 
@@ -586,6 +621,16 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
         if (!empty($wallet_session_id) && $wallet_applied_amount > 0) {
             $order->update_meta_data('_orangepill_wallet_applied',     (string) $wallet_applied_amount);
             $order->update_meta_data('_orangepill_wallet_session_id',  $wallet_session_id);
+        }
+
+        // PR-WC-WEBCHAT-CONVERSATION-LINKING-V1: store conversation ID claim on order.
+        // Attribution is verified by platform via canonical customer match — not locally.
+        // Attribution status stored by OP_External_Order_Sync on first status-change push.
+        $conversation_id = isset($_POST['_orangepill_conversation_id'])
+            ? sanitize_text_field(wp_unslash($_POST['_orangepill_conversation_id']))
+            : '';
+        if (!empty($conversation_id)) {
+            $order->update_meta_data('_orangepill_conversation_id', $conversation_id);
         }
 
         $order->save();
@@ -791,6 +836,15 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
         }
         if ($customer_id) {
             $body['customerId'] = $customer_id;
+        }
+
+        // PR-WC-WEBCHAT-CONVERSATION-LINKING-V1: pass conversation ID claim to platform.
+        // Platform verifies via canonical customer match (ADR-100) — never trusted blindly.
+        $conversation_id = isset($_POST['conversation_id'])
+            ? sanitize_text_field(wp_unslash($_POST['conversation_id']))
+            : '';
+        if (!empty($conversation_id)) {
+            $body['conversationId'] = $conversation_id;
         }
 
         $api    = new OP_API_Client();
@@ -1090,12 +1144,19 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
         // Zero-payable: set verification transient consumed by process_wallet_only_payment().
         // Keyed on server-generated session_id — tamper-resistant.
         if ($remaining_payable === 0.0) {
+            // PR-WC-WEBCHAT-CONVERSATION-LINKING-V1: include conversation_id in transient.
+            // Claim only — verified by platform via customer identity match on external-orders push.
+            $conversation_id_apply = isset($_POST['conversation_id'])
+                ? sanitize_text_field(wp_unslash($_POST['conversation_id']))
+                : '';
+
             set_transient(
                 'op_wallet_zero_payable_' . sanitize_key($session_id),
                 array(
-                    'customer_id'    => $customer_id,
-                    'applied_amount' => $applied_amount,
-                    'session_id'     => $session_id,
+                    'customer_id'     => $customer_id,
+                    'applied_amount'  => $applied_amount,
+                    'session_id'      => $session_id,
+                    'conversation_id' => $conversation_id_apply,
                 ),
                 60 * MINUTE_IN_SECONDS
             );

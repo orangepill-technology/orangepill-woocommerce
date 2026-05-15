@@ -36,6 +36,7 @@ import { PaymentMethodSelector } from './components/PaymentMethodSelector';
 import { QRCodeDisplay }         from './components/QRCodeDisplay';
 import { WalletSection }         from './components/WalletSection';
 import { getPaymentOptions, createIntent, executeIntent, pollPaymentStatus } from './api';
+import { getActiveConversationId } from './conversation-helper';
 
 const config = window.orangepillBlocksConfig || {};
 const i18n   = config.i18n || {};
@@ -111,6 +112,10 @@ export function OrangepillContent( { eventRegistration, emitResponse, billing } 
             const channel    = selectedChannelRef.current;
             const wa         = walletAppliedRef.current;
 
+            // PR-WC-WEBCHAT-CONVERSATION-LINKING-V1: capture at checkout-submit time (RULE 4).
+            // Synchronous — never awaited. Returns null when widget not loaded or no conversation.
+            const conversationId = getActiveConversationId();
+
             // ── Path W: wallet-only (zero-payable) ───────────────────────────
             // Wallet covers 100% of order total — skip provider entirely.
             // PHP process_payment() verifies via transient and completes locally.
@@ -121,6 +126,7 @@ export function OrangepillContent( { eventRegistration, emitResponse, billing } 
                         _orangepill_wallet_only:          'true',
                         _orangepill_wallet_session_id:     wa.sessionId,
                         _orangepill_wallet_applied_amount: String( wa.appliedAmount ),
+                        _orangepill_conversation_id:       conversationId || '',
                     } },
                 };
             }
@@ -162,8 +168,9 @@ export function OrangepillContent( { eventRegistration, emitResponse, billing } 
                         return {
                             type: emitResponse.responseTypes.SUCCESS,
                             meta: { paymentMethodData: {
-                                _orangepill_intent_id:      intentId,
-                                _orangepill_execution_type: 'redirect',
+                                _orangepill_intent_id:       intentId,
+                                _orangepill_execution_type:  'redirect',
+                                _orangepill_conversation_id: conversationId || '',
                                 ...( wa && {
                                     _orangepill_wallet_session_id:     wa.sessionId,
                                     _orangepill_wallet_applied_amount: String( wa.appliedAmount ),
@@ -178,8 +185,9 @@ export function OrangepillContent( { eventRegistration, emitResponse, billing } 
                         return {
                             type: emitResponse.responseTypes.SUCCESS,
                             meta: { paymentMethodData: {
-                                _orangepill_intent_id:      intentId,
-                                _orangepill_execution_type: 'processing',
+                                _orangepill_intent_id:       intentId,
+                                _orangepill_execution_type:  'processing',
+                                _orangepill_conversation_id: conversationId || '',
                                 ...( wa && {
                                     _orangepill_wallet_session_id:     wa.sessionId,
                                     _orangepill_wallet_applied_amount: String( wa.appliedAmount ),
@@ -193,8 +201,9 @@ export function OrangepillContent( { eventRegistration, emitResponse, billing } 
                         return {
                             type: emitResponse.responseTypes.SUCCESS,
                             meta: { paymentMethodData: {
-                                _orangepill_intent_id:      intentId,
-                                _orangepill_execution_type: 'completed',
+                                _orangepill_intent_id:       intentId,
+                                _orangepill_execution_type:  'completed',
+                                _orangepill_conversation_id: conversationId || '',
                                 ...( wa && {
                                     _orangepill_wallet_session_id:     wa.sessionId,
                                     _orangepill_wallet_applied_amount: String( wa.appliedAmount ),
@@ -222,8 +231,9 @@ export function OrangepillContent( { eventRegistration, emitResponse, billing } 
                             return {
                                 type: emitResponse.responseTypes.SUCCESS,
                                 meta: { paymentMethodData: {
-                                    _orangepill_intent_id:      intentId,
-                                    _orangepill_execution_type: 'completed',
+                                    _orangepill_intent_id:       intentId,
+                                    _orangepill_execution_type:  'completed',
+                                    _orangepill_conversation_id: conversationId || '',
                                     ...( wa && {
                                         _orangepill_wallet_session_id:     wa.sessionId,
                                         _orangepill_wallet_applied_amount: String( wa.appliedAmount ),
