@@ -838,8 +838,7 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
             $body['customerId'] = $customer_id;
         }
 
-        // PR-WC-WEBCHAT-CONVERSATION-LINKING-V1: pass conversation ID claim to platform.
-        // Platform verifies via canonical customer match (ADR-100) — never trusted blindly.
+        // PR-WC-WEBCHAT-CONVERSATION-LINKING-V1
         $conversation_id = isset($_POST['conversation_id'])
             ? sanitize_text_field(wp_unslash($_POST['conversation_id']))
             : '';
@@ -847,14 +846,40 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
             $body['conversationId'] = $conversation_id;
         }
 
+        // Method-specific metadata: Nequi, Daviplata, card token.
+        // These fields travel through WC checkout JS → PHP → platform.
+        // Phone/ID are not PCI scope. Card PAN never reaches this server —
+        // only the Wompi token (payment_method_id) produced by browser-side tokenization.
+        $phone_number       = isset($_POST['phone_number'])       ? sanitize_text_field($_POST['phone_number'])       : '';
+        $user_legal_id_type = isset($_POST['user_legal_id_type']) ? sanitize_text_field($_POST['user_legal_id_type']) : '';
+        $user_legal_id      = isset($_POST['user_legal_id'])      ? sanitize_text_field($_POST['user_legal_id'])      : '';
+        $payment_method_id  = isset($_POST['payment_method_id'])  ? sanitize_text_field($_POST['payment_method_id'])  : '';
+
+        if (!empty($phone_number))       $body['metadata']['phone_number']       = $phone_number;
+        if (!empty($user_legal_id_type)) $body['metadata']['user_legal_id_type'] = $user_legal_id_type;
+        if (!empty($user_legal_id))      $body['metadata']['user_legal_id']      = $user_legal_id;
+        if (!empty($payment_method_id))  $body['metadata']['payment_method_id']  = $payment_method_id;
+
         $api    = new OP_API_Client();
         $result = $api->create_payment_intent($body);
 
         if (is_wp_error($result)) {
+            $err_data = $result->get_error_data();
             OP_Logger::error(
                 'native_create_intent_failed',
                 'Failed to create payment intent: ' . $result->get_error_message(),
-                array('method_key' => $method_key, 'currency' => $currency)
+                array(
+                    'method_key'      => $method_key,
+                    'currency'        => $currency,
+                    'merchant_id'     => $merchant_id ?: null,
+                    'customer_id'     => $customer_id  ?: null,
+                    'status_code'     => $err_data['status_code']     ?? null,
+                    'api_response'    => $err_data['response']        ?? null,
+                    'request_url'     => $err_data['request_url']     ?? null,
+                    'request_method'  => $err_data['request_method']  ?? null,
+                    'request_headers' => $err_data['request_headers'] ?? null,
+                    'execute_body'    => $body,
+                )
             );
             wp_send_json_error(array('message' => $result->get_error_message()));
             return;
@@ -866,10 +891,20 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
             return;
         }
 
+        $base_url = rtrim( ! empty( $settings['api_base_url'] ) ? $settings['api_base_url'] : 'https://console.orangepill.cloud', '/' );
         OP_Logger::info(
             'native_intent_created',
             'Payment intent created',
-            array('intent_id' => $intent_id, 'method_key' => $method_key)
+            array(
+                'intent_id'      => $intent_id,
+                'method_key'     => $method_key,
+                'merchant_id'    => $merchant_id ?: null,
+                'customer_id'    => $customer_id ?: null,
+                'request_url'    => $base_url . '/v4/payment-intents',
+                'request_method' => 'POST',
+                'execute_body'   => $body,
+                'api_response'   => array( 'id' => $intent_id, 'status' => $result['status'] ?? '' ),
+            )
         );
 
         wp_send_json_success(array(
@@ -894,6 +929,15 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
         if (empty($intent_id) || empty($method_key)) {
             wp_send_json_error(array('message' => 'intent_id and method_key are required'));
             return;
+        }
+
+        // Server-side channel enforcement: push wallets and direct card
+        // ignore whatever channel the options API returned — the execute
+        // channel is determined by the payment type, not the display channel.
+        if ($method_key === 'wallet.nequi' || $method_key === 'wallet.daviplata') {
+            $channel = 'push_to_phone';
+        } elseif ($method_key === 'card') {
+            $channel = 'direct';
         }
 
         $selection = array('methodKey' => $method_key);
@@ -924,10 +968,21 @@ class OP_Payment_Gateway extends WC_Payment_Gateway {
         $result = $api->execute_payment_intent($intent_id, $execute_body);
 
         if (is_wp_error($result)) {
+            $err_data = $result->get_error_data();
             OP_Logger::error(
                 'native_execute_intent_failed',
                 'Failed to execute payment intent: ' . $result->get_error_message(),
-                array('intent_id' => $intent_id, 'method_key' => $method_key)
+                array(
+                    'intent_id'       => $intent_id,
+                    'method_key'      => $method_key,
+                    'channel'         => $channel,
+                    'status_code'     => $err_data['status_code']     ?? null,
+                    'api_response'    => $err_data['response']        ?? null,
+                    'request_url'     => $err_data['request_url']     ?? null,
+                    'request_method'  => $err_data['request_method']  ?? null,
+                    'request_headers' => $err_data['request_headers'] ?? null,
+                    'execute_body'    => $execute_body,
+                )
             );
             wp_send_json_error(array('message' => $result->get_error_message()));
             return;

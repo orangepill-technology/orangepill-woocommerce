@@ -144,11 +144,92 @@ class OP_Sync_Log_Page {
                                 </td>
                             </tr>
                             <?php if (!empty($log['context'])): ?>
+                                <?php
+                                $ctx         = $log['context'];
+                                $req_url     = $ctx['request_url']     ?? null;
+                                $req_method  = $ctx['request_method']  ?? null;
+                                $req_headers = $ctx['request_headers'] ?? null;
+                                $req_body    = $ctx['execute_body']    ?? $ctx['request_body'] ?? null;
+                                $resp        = $ctx['api_response']    ?? null;
+                                $http_status = $ctx['status_code']     ?? null;
+                                $rest_ctx    = array_diff_key($ctx, array_flip(array('execute_body', 'request_body', 'api_response', 'status_code', 'request_url', 'request_method', 'request_headers', 'merchant_id', 'customer_id')));
+                                $merchant_id_ctx = $ctx['merchant_id'] ?? null;
+                                $customer_id_ctx = $ctx['customer_id'] ?? null;
+                                ?>
                                 <tr id="orangepill-details-<?php echo esc_attr($index); ?>" class="orangepill-details-row" style="display: none;">
                                     <td colspan="5">
-                                        <div class="orangepill-details-content">
-                                            <strong><?php esc_html_e('Context:', 'orangepill-wc'); ?></strong>
-                                            <pre><?php echo esc_html(print_r($log['context'], true)); ?></pre>
+                                        <div class="orangepill-details-content" style="font-size:12px;">
+                                            <?php if ($merchant_id_ctx || $customer_id_ctx): ?>
+                                                <table style="margin-bottom:8px;border-collapse:collapse;font-size:12px;">
+                                                    <?php if ($merchant_id_ctx): ?>
+                                                    <tr>
+                                                        <td style="color:#555;padding:2px 8px 2px 0;white-space:nowrap;"><?php esc_html_e('Merchant ID', 'orangepill-wc'); ?></td>
+                                                        <td><code><?php echo esc_html($merchant_id_ctx); ?></code></td>
+                                                    </tr>
+                                                    <?php endif; ?>
+                                                    <?php if ($customer_id_ctx): ?>
+                                                    <tr>
+                                                        <td style="color:#555;padding:2px 8px 2px 0;white-space:nowrap;"><?php esc_html_e('Customer ID', 'orangepill-wc'); ?></td>
+                                                        <td><code><?php echo esc_html($customer_id_ctx); ?></code></td>
+                                                    </tr>
+                                                    <?php else: ?>
+                                                    <tr>
+                                                        <td style="color:#555;padding:2px 8px 2px 0;white-space:nowrap;"><?php esc_html_e('Customer ID', 'orangepill-wc'); ?></td>
+                                                        <td><span style="color:#72777c;"><?php esc_html_e('(guest)', 'orangepill-wc'); ?></span></td>
+                                                    </tr>
+                                                    <?php endif; ?>
+                                                </table>
+                                            <?php endif; ?>
+
+                                            <?php if (!empty($rest_ctx)): ?>
+                                                <strong><?php esc_html_e('Context:', 'orangepill-wc'); ?></strong>
+                                                <pre style="background:#f6f7f7;padding:8px;overflow:auto;"><?php echo esc_html(wp_json_encode($rest_ctx, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)); ?></pre>
+                                            <?php endif; ?>
+
+                                            <?php if ($req_url !== null): ?>
+                                                <strong><?php esc_html_e('Request:', 'orangepill-wc'); ?></strong>
+                                                <pre style="background:#f0f4ff;padding:8px;overflow:auto;margin-bottom:4px;"><?php echo esc_html(($req_method ?? 'POST') . ' ' . $req_url); ?></pre>
+                                            <?php endif; ?>
+
+                                            <?php if ($req_headers !== null): ?>
+                                                <strong><?php esc_html_e('Request headers:', 'orangepill-wc'); ?></strong>
+                                                <div style="position:relative;">
+                                                    <button type="button" class="button button-small op-copy-json" style="position:absolute;top:4px;right:4px;"
+                                                        data-json="<?php echo esc_attr(wp_json_encode($req_headers, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)); ?>">
+                                                        <?php esc_html_e('Copy', 'orangepill-wc'); ?>
+                                                    </button>
+                                                    <pre style="background:#f0f4ff;padding:8px;overflow:auto;padding-right:70px;"><?php echo esc_html(wp_json_encode($req_headers, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)); ?></pre>
+                                                </div>
+                                            <?php endif; ?>
+
+                                            <?php if ($req_body !== null): ?>
+                                                <strong><?php esc_html_e('Request body:', 'orangepill-wc'); ?></strong>
+                                                <div style="position:relative;">
+                                                    <button type="button" class="button button-small op-copy-json" style="position:absolute;top:4px;right:4px;"
+                                                        data-json="<?php echo esc_attr(wp_json_encode($req_body, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)); ?>">
+                                                        <?php esc_html_e('Copy', 'orangepill-wc'); ?>
+                                                    </button>
+                                                    <pre style="background:#f0f4ff;padding:8px;overflow:auto;padding-right:70px;"><?php echo esc_html(wp_json_encode($req_body, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)); ?></pre>
+                                                </div>
+                                            <?php endif; ?>
+
+                                            <?php if ($resp !== null): ?>
+                                                <strong>
+                                                    <?php esc_html_e('Response:', 'orangepill-wc'); ?>
+                                                    <?php if ($http_status): ?>
+                                                        <span style="color:<?php echo (int)$http_status >= 400 ? '#d63638' : '#00a32a'; ?>">
+                                                            HTTP <?php echo esc_html($http_status); ?>
+                                                        </span>
+                                                    <?php endif; ?>
+                                                </strong>
+                                                <div style="position:relative;">
+                                                    <button type="button" class="button button-small op-copy-json" style="position:absolute;top:4px;right:4px;"
+                                                        data-json="<?php echo esc_attr(wp_json_encode($resp, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)); ?>">
+                                                        <?php esc_html_e('Copy', 'orangepill-wc'); ?>
+                                                    </button>
+                                                    <pre style="background:#fff0f0;padding:8px;overflow:auto;padding-right:70px;"><?php echo esc_html(wp_json_encode($resp, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)); ?></pre>
+                                                </div>
+                                            <?php endif; ?>
                                         </div>
                                     </td>
                                 </tr>
@@ -182,6 +263,21 @@ class OP_Sync_Log_Page {
                 <?php endif; ?>
             <?php endif; ?>
         </div>
+        <script>
+        (function () {
+            document.addEventListener('click', function (e) {
+                var btn = e.target.closest('.op-copy-json');
+                if (btn) {
+                    var text = btn.dataset.json;
+                    navigator.clipboard.writeText(text).then(function () {
+                        var orig = btn.textContent;
+                        btn.textContent = 'Copied!';
+                        setTimeout(function () { btn.textContent = orig; }, 1500);
+                    });
+                }
+            });
+        })();
+        </script>
         <?php
     }
 

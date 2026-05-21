@@ -320,6 +320,25 @@ class OP_Settings_Page {
                             </p>
                         </td>
                     </tr>
+
+                    <tr>
+                        <th scope="row">
+                            <label for="wompi_public_key"><?php esc_html_e('Wompi Public Key', 'orangepill-wc'); ?></label>
+                        </th>
+                        <td>
+                            <input
+                                type="text"
+                                name="wompi_public_key"
+                                id="wompi_public_key"
+                                value="<?php echo esc_attr($settings['wompi_public_key'] ?? ''); ?>"
+                                class="regular-text"
+                                placeholder="pub_test_... / pub_prod_..."
+                            />
+                            <p class="description">
+                                <?php esc_html_e('Wompi public key for browser-side card tokenization (starts with pub_test_ or pub_prod_). Safe to expose in frontend JS — cannot charge anything, only tokenizes card data. Required for card payments.', 'orangepill-wc'); ?>
+                            </p>
+                        </td>
+                    </tr>
                 </table>
 
                 <p class="submit">
@@ -446,6 +465,7 @@ class OP_Settings_Page {
             'webchat_entrypoint_id' => sanitize_text_field($_POST['webchat_entrypoint_id'] ?? '679625a3-7ce0-41be-8c11-ca60e83d473a'),
             'webchat_embed_url'     => esc_url_raw($_POST['webchat_embed_url'] ?? 'http://localhost:5200/webchat/embed.js'),
             'identity_secret'       => sanitize_text_field($_POST['identity_secret'] ?? ''),
+            'wompi_public_key'      => sanitize_text_field($_POST['wompi_public_key'] ?? ''),
         );
 
         if (!empty($settings['webhook_secret']) && strlen($settings['webhook_secret']) < 8) {

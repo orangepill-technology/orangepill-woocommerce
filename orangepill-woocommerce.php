@@ -397,13 +397,24 @@ function orangepill_wc_enqueue_checkout_assets() {
 
     $default_country = substr(get_option('woocommerce_default_country', 'CO'), 0, 2);
 
+    $op_settings       = get_option('woocommerce_orangepill_settings', array());
+    $wompi_public_key  = $op_settings['wompi_public_key'] ?? '';
+    $wompi_tokenize_url = '';
+    if (!empty($wompi_public_key)) {
+        $wompi_tokenize_url = (strpos($wompi_public_key, 'pub_prod_') === 0)
+            ? 'https://production.wompi.co/v1/tokens/cards'
+            : 'https://sandbox.wompi.co/v1/tokens/cards';
+    }
+
     wp_localize_script('orangepill-wc-native-shell', 'orangepillNative', array(
-        'ajax_url'   => admin_url('admin-ajax.php'),
-        'nonce'      => wp_create_nonce('orangepill_wc_checkout'),
-        'cart_total' => (string) WC()->cart->get_total('edit'),
-        'currency'   => get_woocommerce_currency(),
-        'country'    => $default_country,
-        'i18n'       => array(
+        'ajax_url'           => admin_url('admin-ajax.php'),
+        'nonce'              => wp_create_nonce('orangepill_wc_checkout'),
+        'cart_total'         => (string) WC()->cart->get_total('edit'),
+        'currency'           => get_woocommerce_currency(),
+        'country'            => $default_country,
+        'wompi_public_key'   => $wompi_public_key,
+        'wompi_tokenize_url' => $wompi_tokenize_url,
+        'i18n'               => array(
             'loading_options'    => __('Loading payment options...', 'orangepill-wc'),
             'select_method'      => __('Please select a payment method.', 'orangepill-wc'),
             'creating_payment'   => __('Preparing payment...', 'orangepill-wc'),
@@ -424,7 +435,28 @@ function orangepill_wc_enqueue_checkout_assets() {
             'payment_confirmed'  => __('&iexcl;Pago confirmado!', 'orangepill-wc'),
             'payment_expired'    => __('El tiempo para pagar ha expirado. Por favor intenta de nuevo.', 'orangepill-wc'),
             'payment_failed'     => __('El pago no fue completado. Por favor intenta de nuevo.', 'orangepill-wc'),
-            'payment_timeout'    => __('Tiempo de espera agotado. Verifica tu email o intenta de nuevo.', 'orangepill-wc'),
+            'payment_timeout'        => __('Tiempo de espera agotado. Verifica tu email o intenta de nuevo.', 'orangepill-wc'),
+            // Wallet sub-forms
+            'nequi_desc'             => __('Ingresa el número de celular registrado en Nequi. Recibirás una notificación push para aprobar el pago.', 'orangepill-wc'),
+            'daviplata_desc'         => __('Ingresa los datos de tu cuenta Daviplata. Recibirás una notificación push para aprobar el pago.', 'orangepill-wc'),
+            'phone_number'           => __('Número de celular', 'orangepill-wc'),
+            'id_type'                => __('Tipo de documento', 'orangepill-wc'),
+            'id_number'              => __('Número de documento', 'orangepill-wc'),
+            'nequi_phone_error'      => __('Ingresa un número colombiano de 10 dígitos (ej. 3001234567)', 'orangepill-wc'),
+            'daviplata_phone_error'  => __('Ingresa un número colombiano de 10 dígitos', 'orangepill-wc'),
+            'daviplata_id_error'     => __('Ingresa tu número de documento', 'orangepill-wc'),
+            // Card sub-form
+            'card_desc'              => __('Tus datos de tarjeta van directamente a Wompi (nunca pasan por nuestro servidor).', 'orangepill-wc'),
+            'card_number'            => __('Número de tarjeta', 'orangepill-wc'),
+            'card_expiry'            => __('Vencimiento (MM/AA)', 'orangepill-wc'),
+            'card_holder'            => __('Nombre del titular', 'orangepill-wc'),
+            'card_number_invalid'    => __('Número de tarjeta inválido', 'orangepill-wc'),
+            'card_expiry_invalid'    => __('Fecha de vencimiento inválida — usa el formato MM/AA', 'orangepill-wc'),
+            'card_cvc_invalid'       => __('CVC inválido', 'orangepill-wc'),
+            'card_holder_invalid'    => __('Ingresa el nombre del titular', 'orangepill-wc'),
+            'card_not_configured'    => __('Pago con tarjeta no configurado. Contacta al administrador.', 'orangepill-wc'),
+            'card_error'             => __('Error al verificar la tarjeta. Revisa los datos e intenta de nuevo.', 'orangepill-wc'),
+            'tokenizing_card'        => __('Verificando tarjeta...', 'orangepill-wc'),
         ),
     ));
 }
