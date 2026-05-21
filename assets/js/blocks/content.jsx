@@ -35,11 +35,83 @@ import { decodeEntities } from '@wordpress/html-entities';
 import { PaymentMethodSelector } from './components/PaymentMethodSelector';
 import { QRCodeDisplay }         from './components/QRCodeDisplay';
 import { WalletSection }         from './components/WalletSection';
+import { SubForm }               from './components/SubForm';
 import { getPaymentOptions, createIntent, executeIntent, pollPaymentStatus } from './api';
 import { getActiveConversationId } from './conversation-helper';
 
 const config = window.orangepillBlocksConfig || {};
 const i18n   = config.i18n || {};
+
+// Methods that require extra sub-form data before intent creation.
+const SUBFORM_METHODS = new Set( [ 'wallet.nequi', 'wallet.daviplata', 'card' ] );
+
+/**
+ * Tokenize card data via Wompi (SAQ-A: PAN never touches our server).
+ * Returns the token ID string (e.g. "tok_test_...").
+ */
+async function tokenizeCard( cardData ) {
+    const wompiUrl = config.wompiTokenizeUrl;
+    const pubKey   = config.wompiPublicKey;
+    if ( ! wompiUrl || ! pubKey ) {
+        throw new Error( i18n.err_card_tokenize || 'Card payment not configured.' );
+    }
+
+    const digits    = ( cardData.card_number || '' ).replace( /\D/g, '' );
+    const expiryRaw = ( cardData.card_expiry || '' ).replace( /\s/g, '' );
+    const parts     = expiryRaw.split( '/' );
+    const expMonth  = ( parts[ 0 ] || '' ).padStart( 2, '0' );
+    const expYear   = ( parts[ 1 ] || '' );
+
+    const resp = await fetch( wompiUrl, {
+        method:  'POST',
+        headers: {
+            'Content-Type':  'application/json',
+            'Authorization': 'Bearer ' + pubKey,
+        },
+        body: JSON.stringify( {
+            number:      digits,
+            exp_month:   expMonth,
+            exp_year:    expYear,
+            cvc:         cardData.card_cvc || '',
+            card_holder: cardData.card_holder || '',
+        } ),
+    } );
+
+    const json = await resp.json();
+    const tokenId = json?.data?.id;
+    if ( ! resp.ok || ! tokenId ) {
+        throw new Error( i18n.err_card_tokenize || 'No se pudo procesar la tarjeta.' );
+    }
+    return tokenId;
+}
+
+/**
+ * Validate sub-form data for the given method.
+ * Returns null on success, or an error message string on failure.
+ */
+function validateSubForm( methodKey, formData ) {
+    if ( methodKey === 'wallet.nequi' || methodKey === 'wallet.daviplata' ) {
+        const phone = ( formData.phone_number || '' ).replace( /\D/g, '' );
+        if ( ! phone ) return i18n.err_phone_required || 'Ingresa tu número de celular.';
+        if ( phone.length !== 10 ) return i18n.err_phone_invalid || 'El número de celular debe tener 10 dígitos.';
+    }
+
+    if ( methodKey === 'wallet.daviplata' ) {
+        if ( ! formData.user_legal_id_type ) return i18n.err_id_type_required || 'Selecciona el tipo de documento.';
+        if ( ! ( formData.user_legal_id || '' ).trim() ) return i18n.err_id_number_required || 'Ingresa tu número de documento.';
+    }
+
+    if ( methodKey === 'card' ) {
+        const digits = ( formData.card_number || '' ).replace( /\D/g, '' );
+        if ( digits.length < 13 ) return i18n.err_card_number || 'Ingresa el número de tarjeta completo.';
+        const expiryDigits = ( formData.card_expiry || '' ).replace( /\D/g, '' );
+        if ( expiryDigits.length < 4 ) return i18n.err_card_expiry || 'Ingresa la fecha de vencimiento (MM/AA).';
+        if ( ! ( formData.card_holder || '' ).trim() ) return i18n.err_card_holder || 'Ingresa el nombre del titular.';
+        if ( ! ( formData.card_cvc || '' ).trim() ) return i18n.err_card_cvc || 'Ingresa el código CVC.';
+    }
+
+    return null;
+}
 
 export function OrangepillContent( { eventRegistration, emitResponse, billing } ) {
     // onPaymentSetup is the WC Blocks 8.0+ event (replaced onPaymentProcessing in WC 7.9).
@@ -56,14 +128,18 @@ export function OrangepillContent( { eventRegistration, emitResponse, billing } 
     const [ paymentRequest, setPaymentRequest  ] = useState( null );
     // walletApplied: null | { sessionId, appliedAmount, remainingPayable }
     const [ walletApplied,  setWalletApplied  ] = useState( null );
+    // subFormData: phone/ID/card fields — collected before intent creation
+    const [ subFormData,    setSubFormData    ] = useState( {} );
 
     // Refs keep the onPaymentSetup closure current without re-registering it on every method change.
     const selectedMethodRef  = useRef( selectedMethod );
     const selectedChannelRef = useRef( selectedChannel );
     const walletAppliedRef   = useRef( walletApplied );
+    const subFormDataRef     = useRef( subFormData );
     useEffect( () => { selectedMethodRef.current  = selectedMethod;  }, [ selectedMethod  ] );
     useEffect( () => { selectedChannelRef.current = selectedChannel; }, [ selectedChannel ] );
     useEffect( () => { walletAppliedRef.current   = walletApplied;   }, [ walletApplied   ] );
+    useEffect( () => { subFormDataRef.current     = subFormData;     }, [ subFormData     ] );
 
     // Cart total — convert from WC Blocks minor units to major units used by the payment API.
     // e.g. COP: 438211 / 10^0 = 438211; USD: 438211 / 10^2 = 4382.11
@@ -138,6 +214,36 @@ export function OrangepillContent( { eventRegistration, emitResponse, billing } 
                 };
             }
 
+            // ── Sub-form validation & card tokenization ───────────────────────
+            let extraData = {};
+            if ( SUBFORM_METHODS.has( methodKey ) ) {
+                const fd  = subFormDataRef.current;
+                const err = validateSubForm( methodKey, fd );
+                if ( err ) {
+                    return { type: emitResponse.responseTypes.ERROR, message: err };
+                }
+
+                if ( methodKey === 'wallet.nequi' ) {
+                    extraData = { phone_number: fd.phone_number.replace( /\D/g, '' ) };
+                } else if ( methodKey === 'wallet.daviplata' ) {
+                    extraData = {
+                        phone_number:        fd.phone_number.replace( /\D/g, '' ),
+                        user_legal_id_type:  fd.user_legal_id_type,
+                        user_legal_id:       fd.user_legal_id.trim(),
+                    };
+                } else if ( methodKey === 'card' ) {
+                    try {
+                        const tokenId = await tokenizeCard( fd );
+                        extraData = { payment_method_id: tokenId };
+                    } catch ( tokenErr ) {
+                        return {
+                            type:    emitResponse.responseTypes.ERROR,
+                            message: tokenErr.message || ( i18n.err_card_tokenize || 'Card error.' ),
+                        };
+                    }
+                }
+            }
+
             // AbortController so polling stops cleanly if the component unmounts
             // mid-poll (e.g. user navigates away).
             const ac = new AbortController();
@@ -148,7 +254,7 @@ export function OrangepillContent( { eventRegistration, emitResponse, billing } 
 
             try {
                 // Step 1: create intent (for remaining payable, or full total if no wallet)
-                const intentResult = await createIntent( methodKey, currency, intentAmount );
+                const intentResult = await createIntent( methodKey, currency, intentAmount, extraData );
                 const intentId     = intentResult.intentId;
                 if ( ! intentId ) throw new Error( 'No intent ID returned' );
 
@@ -316,8 +422,17 @@ export function OrangepillContent( { eventRegistration, emitResponse, billing } 
                     setSelectedChannel( ch );
                     setPaymentRequest( null );
                     setExecState( 'idle' );
+                    setSubFormData( {} );
                 } }
             />
+
+            { SUBFORM_METHODS.has( selectedMethod ) && (
+                <SubForm
+                    methodKey={ selectedMethod }
+                    formData={ subFormData }
+                    onChange={ setSubFormData }
+                />
+            ) }
 
             { /* PR-WC-BLOCKS-WALLET-V1: Wallet apply UI (logged-in only).
                  Option A (display-only cart totals) — WC cart store unchanged.

@@ -46,11 +46,12 @@ export function getPaymentOptions( currency, amount, country ) {
  * Create a payment intent for the selected method.
  * Calls: orangepill_create_intent (ajax_create_intent)
  */
-export function createIntent( methodKey, currency, amount ) {
+export function createIntent( methodKey, currency, amount, extraData = {} ) {
     return ajaxPost( 'orangepill_create_intent', {
         method_key: methodKey,
         currency,
         amount,
+        ...extraData,
     } );
 }
 
