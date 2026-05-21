@@ -100,16 +100,26 @@ class OP_Blocks_Integration extends AbstractPaymentMethodType {
     public function get_payment_method_data() {
         $default_country = substr( get_option( 'woocommerce_default_country', 'CO' ), 0, 2 );
 
+        $wompi_public_key  = $this->settings['wompi_public_key'] ?? '';
+        $wompi_tokenize_url = '';
+        if ( ! empty( $wompi_public_key ) ) {
+            $wompi_tokenize_url = ( strpos( $wompi_public_key, 'pub_prod_' ) === 0 )
+                ? 'https://production.wompi.co/v1/tokens/cards'
+                : 'https://sandbox.wompi.co/v1/tokens/cards';
+        }
+
         $data = array(
-            'title'       => $this->settings['title']       ?? __( 'Orangepill', 'orangepill-wc' ),
-            'description' => $this->settings['description'] ?? '',
-            'ajaxUrl'     => admin_url( 'admin-ajax.php' ),
-            'nonce'       => wp_create_nonce( 'orangepill_wc_checkout' ),
-            'currency'    => get_woocommerce_currency(),
-            'country'     => $default_country,
-            'isLoggedIn'  => is_user_logged_in(),
-            'wallet'      => array( 'enabled' => false ),
-            'i18n'        => array(
+            'title'           => $this->settings['title']       ?? __( 'Orangepill', 'orangepill-wc' ),
+            'description'     => $this->settings['description'] ?? '',
+            'ajaxUrl'         => admin_url( 'admin-ajax.php' ),
+            'nonce'           => wp_create_nonce( 'orangepill_wc_checkout' ),
+            'currency'        => get_woocommerce_currency(),
+            'country'         => $default_country,
+            'isLoggedIn'      => is_user_logged_in(),
+            'wompiPublicKey'  => $wompi_public_key,
+            'wompiTokenizeUrl'=> $wompi_tokenize_url,
+            'wallet'          => array( 'enabled' => false ),
+            'i18n'            => array(
                 'loading_options'         => __( 'Loading payment options...', 'orangepill-wc' ),
                 'select_method'           => __( 'Please select a payment method.', 'orangepill-wc' ),
                 'creating_payment'        => __( 'Preparing payment...', 'orangepill-wc' ),
@@ -144,6 +154,29 @@ class OP_Blocks_Integration extends AbstractPaymentMethodType {
                 'wallet_exceeds_balance'  => __( 'Amount exceeds wallet balance.', 'orangepill-wc' ),
                 'wallet_exceeds_total'    => __( 'Amount exceeds order total.', 'orangepill-wc' ),
                 'wallet_amount_placeholder' => __( 'Amount to apply', 'orangepill-wc' ),
+                // Sub-form strings (Nequi / Daviplata / card)
+                'nequi_desc'             => __( 'Te enviaremos una notificación push a tu app Nequi.', 'orangepill-wc' ),
+                'daviplata_desc'         => __( 'Te enviaremos una solicitud de cobro a tu app Daviplata.', 'orangepill-wc' ),
+                'phone_number'           => __( 'Número de celular', 'orangepill-wc' ),
+                'phone_placeholder'      => __( 'Ej: 3001234567', 'orangepill-wc' ),
+                'id_type'                => __( 'Tipo de documento', 'orangepill-wc' ),
+                'id_number'              => __( 'Número de documento', 'orangepill-wc' ),
+                'id_number_placeholder'  => __( 'Ej: 1234567890', 'orangepill-wc' ),
+                'card_desc'              => __( 'Pago seguro con tarjeta. Tus datos van directamente a la pasarela.', 'orangepill-wc' ),
+                'card_number'            => __( 'Número de tarjeta', 'orangepill-wc' ),
+                'card_expiry'            => __( 'MM / AA', 'orangepill-wc' ),
+                'card_holder'            => __( 'Nombre del titular', 'orangepill-wc' ),
+                'card_cvc'               => __( 'CVC', 'orangepill-wc' ),
+                'err_phone_required'     => __( 'Ingresa tu número de celular.', 'orangepill-wc' ),
+                'err_phone_invalid'      => __( 'El número de celular debe tener 10 dígitos.', 'orangepill-wc' ),
+                'err_id_type_required'   => __( 'Selecciona el tipo de documento.', 'orangepill-wc' ),
+                'err_id_number_required' => __( 'Ingresa tu número de documento.', 'orangepill-wc' ),
+                'err_card_number'        => __( 'Ingresa el número de tarjeta completo.', 'orangepill-wc' ),
+                'err_card_expiry'        => __( 'Ingresa la fecha de vencimiento (MM/AA).', 'orangepill-wc' ),
+                'err_card_holder'        => __( 'Ingresa el nombre del titular.', 'orangepill-wc' ),
+                'err_card_cvc'           => __( 'Ingresa el código CVC.', 'orangepill-wc' ),
+                'err_card_tokenize'      => __( 'No se pudo procesar la tarjeta. Verifica los datos e intenta de nuevo.', 'orangepill-wc' ),
+                'tokenizing_card'        => __( 'Verificando tarjeta...', 'orangepill-wc' ),
             ),
         );
 
