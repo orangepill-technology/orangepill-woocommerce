@@ -25,7 +25,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 class OP_Webchat_Identity {
 
-    const TOKEN_VERSION     = 'v1';
+    const TOKEN_VERSION     = 1;    // integer — verifier rejects non-integer versions
     const TOKEN_TTL_SECONDS = 3600; // 1 hour — aligns with redirect URL transient TTL
 
     /**
@@ -58,38 +58,39 @@ class OP_Webchat_Identity {
         $user    = wp_get_current_user();
         $user_id = $user->ID;
 
-        // Collect identifier claims honestly — only assert what WP actually has.
-        // Per ADR-022: identifier verification status is meaningful; never fabricate.
-        $identifiers = array();
+        $now     = time();
+        $payload = array(
+            'version' => self::TOKEN_VERSION, // integer 1 — verifier: claims.version !== 1
+            'iat'     => $now,                // standard JWT claim name
+            'exp'     => $now + self::TOKEN_TTL_SECONDS,
+        );
 
+        // Flat identifier fields — verifier reads claims.email / claims.phone directly.
+        // Per ADR-022: assert only what WP actually has; never fabricate.
         if ( ! empty( $user->user_email ) ) {
-            $identifiers['email'] = sanitize_email( $user->user_email );
+            $payload['email'] = sanitize_email( $user->user_email );
         }
 
         // billing_phone matches OP_Customer_Sync's source for phone (same meta key).
         $billing_phone = get_user_meta( $user_id, 'billing_phone', true );
         if ( ! empty( $billing_phone ) ) {
-            // Strip non-digit / non-plus characters for canonical phone format.
-            $identifiers['phone'] = preg_replace( '/[^\d+]/', '', $billing_phone );
+            $payload['phone'] = preg_replace( '/[^\d+]/', '', $billing_phone );
         }
 
-        $now     = time();
-        $payload = array(
-            'version'        => self::TOKEN_VERSION,
-            'issued_at'      => $now,
-            'expires_at'     => $now + self::TOKEN_TTL_SECONDS,
-            'integration_id' => $integration_id,
-            'merchant_id'    => $merchant_id,
-            'wp_user_id'     => $user_id,
-            'identifiers'    => $identifiers,
-        );
-
-        // Include canonical_customer_id only if plugin has already synced this user.
-        // Never fabricate: assert only what we know is authoritative.
+        // sub: canonical customer ID if already synced; otherwise omit (email/phone suffice).
         $canonical_customer_id = get_user_meta( $user_id, '_orangepill_customer_id', true );
         if ( ! empty( $canonical_customer_id ) ) {
-            $payload['canonical_customer_id'] = $canonical_customer_id;
+            $payload['sub'] = $canonical_customer_id;
         }
+
+        // display_name: optional, used by platform for new-customer creation.
+        $display_name = trim( $user->first_name . ' ' . $user->last_name );
+        if ( ! empty( $display_name ) ) {
+            $payload['display_name'] = $display_name;
+        }
+
+        // integration_id intentionally omitted: plugin holds the payments integration ID,
+        // not the webchat channel integration ID. Verifier skips the scope check when absent.
 
         try {
             return self::sign_payload( $payload, $identity_secret );
