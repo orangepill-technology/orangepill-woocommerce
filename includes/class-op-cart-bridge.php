@@ -20,6 +20,18 @@
  *
  * Cart shape mirrors PR #1409 CommerceCartCapability (Cart / CartItem interfaces).
  * lineId = WC cart_item_key = MD5(product_id + variation_id + variation_data).
+ *
+ * Widget refresh contract (Finding D):
+ *   Every successful mutation response includes the full updated Cart shape with
+ *   `cartHash`. The widget compares this hash to its last-known value; if different,
+ *   it dispatches `$(document.body).trigger('wc_fragment_refresh')` on the host page.
+ *   The plugin does NOT trigger fragment refresh server-side — there is no server-push
+ *   mechanism for WC cart fragments.
+ *
+ * Bridge token refresh strategy:
+ *   Tokens expire after BRIDGE_TOKEN_TTL (5 min). The widget should re-call
+ *   GET /context before expiry, or immediately on receiving 401 CART_SESSION_INVALID,
+ *   to obtain a fresh token. No sliding expiry — each /context call issues a new token.
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -32,11 +44,11 @@ class OP_Cart_Bridge {
     const BRIDGE_TOKEN_TTL         = 300; // 5 minutes
     const BRIDGE_TOKEN_PREFIX      = 'op_cart_bridge_';
 
-    // Error codes (mirror PR #1409 CommerceCartCapability error set)
+    // Error codes — must match PR #1409 CommerceCartCapability exactly
     const ERR_UNAUTHORIZED      = 'CART_UNAUTHORIZED';
     const ERR_SESSION_INVALID   = 'CART_SESSION_INVALID';
     const ERR_PRODUCT_NOT_FOUND = 'CART_PRODUCT_NOT_FOUND';
-    const ERR_ITEM_NOT_FOUND    = 'CART_ITEM_NOT_FOUND';
+    const ERR_LINE_NOT_FOUND    = 'CART_LINE_NOT_FOUND';    // lineId is line identity (not "item")
     const ERR_INVALID_QUANTITY  = 'CART_INVALID_QUANTITY';
     const ERR_INTERNAL          = 'CART_INTERNAL_ERROR';
 
@@ -300,7 +312,7 @@ class OP_Cart_Bridge {
 
         $cart = WC()->cart->get_cart();
         if ( ! isset( $cart[ $line_id ] ) ) {
-            return new WP_Error( self::ERR_ITEM_NOT_FOUND, 'Cart item not found.', array( 'status' => 404 ) );
+            return new WP_Error( self::ERR_LINE_NOT_FOUND, 'Cart item not found.', array( 'status' => 404 ) );
         }
 
         if ( 0 === $quantity ) {
@@ -331,7 +343,7 @@ class OP_Cart_Bridge {
         $cart    = WC()->cart->get_cart();
 
         if ( ! isset( $cart[ $line_id ] ) ) {
-            return new WP_Error( self::ERR_ITEM_NOT_FOUND, 'Cart item not found.', array( 'status' => 404 ) );
+            return new WP_Error( self::ERR_LINE_NOT_FOUND, 'Cart item not found.', array( 'status' => 404 ) );
         }
 
         WC()->cart->remove_cart_item( $line_id );

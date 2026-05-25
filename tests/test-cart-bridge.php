@@ -310,7 +310,7 @@ class Test_Cart_Bridge extends TestCase {
         $this->assertEquals( 'CART_UNAUTHORIZED',      OP_Cart_Bridge::ERR_UNAUTHORIZED );
         $this->assertEquals( 'CART_SESSION_INVALID',   OP_Cart_Bridge::ERR_SESSION_INVALID );
         $this->assertEquals( 'CART_PRODUCT_NOT_FOUND', OP_Cart_Bridge::ERR_PRODUCT_NOT_FOUND );
-        $this->assertEquals( 'CART_ITEM_NOT_FOUND',    OP_Cart_Bridge::ERR_ITEM_NOT_FOUND );
+        $this->assertEquals( 'CART_LINE_NOT_FOUND',    OP_Cart_Bridge::ERR_LINE_NOT_FOUND );
         $this->assertEquals( 'CART_INVALID_QUANTITY',  OP_Cart_Bridge::ERR_INVALID_QUANTITY );
         $this->assertEquals( 'CART_INTERNAL_ERROR',    OP_Cart_Bridge::ERR_INTERNAL );
     }
