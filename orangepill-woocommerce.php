@@ -162,6 +162,9 @@ function orangepill_wc_init() {
     $order_metabox = new OP_Order_Metabox();
     $order_metabox->register();
 
+    // PR-WC-WOOCOMMERCE-NATIVE-CART-BRIDGE-V1: REST API for platform cart sync
+    add_action( 'rest_api_init', array( 'OP_Cart_Bridge', 'register_routes' ) );
+
     // Admin: manual "Mark as Paid" action (reconciliation — not polling)
     add_action('admin_post_orangepill_mark_paid', 'orangepill_wc_mark_paid');
 
