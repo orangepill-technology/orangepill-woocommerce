@@ -210,15 +210,27 @@ class OP_Cart_Bridge {
             return new WP_Error( self::ERR_SESSION_INVALID, 'Bridge token not found or expired.', array( 'status' => 401 ) );
         }
 
-        $customer_id  = $transient['customer_id'];
+        $customer_id = $transient['customer_id'];
+
+        // In REST API context WC()->session and WC()->cart may be null — WC skips
+        // cart/session init for non-frontend requests. Use the official WC methods
+        // which are idempotent (no-op when already initialised).
+        WC()->initialize_session();
+        WC()->initialize_cart();
+
         $session_data = WC()->session->get_session( $customer_id );
 
         if ( false === $session_data || null === $session_data ) {
             return new WP_Error( self::ERR_SESSION_INVALID, 'WC session not found for bridge token.', array( 'status' => 401 ) );
         }
 
-        // Inject session data into the already-initialised (but empty) WC session object.
-        WC()->session->set_customer_id( $customer_id );
+        // Override _customer_id so save_data() persists back to the correct session.
+        // WC_Session_Handler (WC 10.x) has no set_customer_id() — property is protected.
+        $prop = new ReflectionProperty( WC()->session, '_customer_id' );
+        $prop->setAccessible( true );
+        $prop->setValue( WC()->session, $customer_id );
+
+        // Populate in-memory session data from DB values.
         foreach ( $session_data as $key => $value ) {
             WC()->session->set( $key, $value );
         }
