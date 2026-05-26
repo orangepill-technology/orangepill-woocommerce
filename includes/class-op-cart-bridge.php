@@ -230,12 +230,49 @@ class OP_Cart_Bridge {
         $prop->setAccessible( true );
         $prop->setValue( WC()->session, $customer_id );
 
+        // Allow save_data() to persist in REST context.
+        // has_session() checks: cookie present || _has_cookie || is_user_logged_in().
+        // All three are false in server-to-server requests — save_data() would silently
+        // skip the DB write. Setting _has_cookie=true unblocks it once we have a
+        // validated bridge token (i.e. we know this session legitimately exists).
+        $has_cookie_prop = new ReflectionProperty( WC()->session, '_has_cookie' );
+        $has_cookie_prop->setAccessible( true );
+        $has_cookie_prop->setValue( WC()->session, true );
+
         // Populate in-memory session data from DB values.
         foreach ( $session_data as $key => $value ) {
             WC()->session->set( $key, $value );
         }
 
-        WC()->cart->get_cart_from_session();
+        // Bypass WC_Cart_Session::get_cart_from_session() — in WC 10.x REST context
+        // wp_loaded already fired it once with an anonymous session, and WC's internal
+        // did_action('woocommerce_load_cart_from_session') guard + data_hash filters
+        // silently discard items on the second call. Populate cart_contents directly.
+        $raw_cart = WC()->session->get( 'cart', array() );
+        // WC 10.x stores session values as maybe_serialize()d strings in _data[]; get() unserialises
+        // them. In edge cases (legacy sessions, version skew) the value may still be a serialised string.
+        if ( is_string( $raw_cart ) ) {
+            $raw_cart = maybe_unserialize( $raw_cart );
+        }
+        if ( ! is_array( $raw_cart ) ) {
+            $raw_cart = array();
+        }
+
+        $cart_contents = array();
+        foreach ( $raw_cart as $cart_item_key => $values ) {
+            if ( ! isset( $values['product_id'], $values['quantity'] ) ) {
+                continue;
+            }
+            $product_id = ! empty( $values['variation_id'] ) ? $values['variation_id'] : $values['product_id'];
+            $product    = wc_get_product( $product_id );
+            if ( ! $product || ! $product->exists() || $values['quantity'] < 1 ) {
+                continue;
+            }
+            $values['data']            = $product;
+            $cart_contents[ $cart_item_key ] = $values;
+        }
+
+        WC()->cart->set_cart_contents( $cart_contents );
         WC()->cart->calculate_totals();
 
         return $customer_id;
@@ -403,7 +440,9 @@ class OP_Cart_Bridge {
         $currency = get_woocommerce_currency();
         $items    = array();
 
-        foreach ( $cart->get_cart() as $cart_item_key => $cart_item ) {
+        $all_cart = $cart->get_cart();
+
+        foreach ( $all_cart as $cart_item_key => $cart_item ) {
             $product = $cart_item['data'] ?? null;
             if ( ! ( $product instanceof WC_Product ) ) {
                 continue;
