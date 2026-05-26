@@ -157,6 +157,33 @@ class OP_Cart_Bridge {
      * @return WP_REST_Response
      */
     public static function handle_context( WP_REST_Request $request ) {
+        // WC skips wc_load_cart() for REST API requests (is_rest_api_request() = true),
+        // so WC()->session is null here. We must initialize it to read the browser cookie.
+        //
+        // Safety guard: WC_Session_Handler::is_session_cookie_valid() considers any
+        // logged-in user session (non-t_ customer_id) invalid when is_user_logged_in()=false
+        // (REST request without X-WP-Nonce) and calls destroy_session(), which deletes
+        // the user's cart from the DB. To prevent this, read the cookie before initializing
+        // and skip init for non-guest sessions that would fail validation without WP auth.
+        $session_class = apply_filters( 'woocommerce_session_handler', 'WC_Session_Handler' );
+        $cookie_name   = apply_filters( 'woocommerce_cookie', 'wp_woocommerce_session_' . COOKIEHASH );
+        $cookie_raw    = isset( $_COOKIE[ $cookie_name ] ) ? wc_clean( wp_unslash( (string) $_COOKIE[ $cookie_name ] ) ) : '';
+
+        if ( ! empty( $cookie_raw ) ) {
+            $parts = strpos( $cookie_raw, '||' ) !== false ? explode( '||', $cookie_raw ) : explode( '|', $cookie_raw );
+            if ( count( $parts ) === 4 ) {
+                $cookie_customer_id = $parts[0];
+                // Non-guest session in unauthenticated REST context: WC would destroy it.
+                // Return 204 rather than trigger destroy_session() on the user's live session.
+                $is_guest = empty( $cookie_customer_id ) || 0 === strpos( $cookie_customer_id, 't_' );
+                if ( ! $is_guest && ! is_user_logged_in() ) {
+                    return new WP_REST_Response( null, 204 );
+                }
+            }
+        }
+
+        WC()->initialize_session();
+
         if ( ! WC()->session || ! WC()->session->has_session() ) {
             return new WP_REST_Response( null, 204 );
         }
