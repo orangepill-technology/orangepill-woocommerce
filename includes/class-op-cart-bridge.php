@@ -160,8 +160,18 @@ class OP_Cart_Bridge {
         // WC skips wc_load_cart() for REST API requests, so WC()->session is null here.
         WC()->initialize_session();
 
-        if ( ! WC()->session || ! WC()->session->has_session() ) {
+        if ( ! WC()->session ) {
             return new WP_REST_Response( null, 204 );
+        }
+
+        // First-time anonymous visitor: no WC session cookie exists yet.
+        // Create one — mirrors what WC does on first add-to-cart.
+        // set() marks has_changed = true so save_data() actually writes to DB.
+        // set_customer_session_cookie(true) sets _has_cookie = true and sends Set-Cookie.
+        if ( ! WC()->session->has_session() ) {
+            WC()->session->set( 'op_cart_bridge_init', true );
+            WC()->session->set_customer_session_cookie( true );
+            WC()->session->save_data();
         }
 
         $customer_id = WC()->session->get_customer_id();
