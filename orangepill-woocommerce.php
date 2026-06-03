@@ -165,6 +165,16 @@ function orangepill_wc_init() {
     // PR-WC-WOOCOMMERCE-NATIVE-CART-BRIDGE-V1: REST API for platform cart sync
     add_action( 'rest_api_init', array( 'OP_Cart_Bridge', 'register_routes' ) );
 
+    // WhatsApp click-to-chat buttons
+    $settings = get_option( 'woocommerce_orangepill_settings', array() );
+    if ( ( $settings['whatsapp_enabled'] ?? 'no' ) === 'yes' && ! empty( $settings['whatsapp_number'] ) ) {
+        $wa_button = new OP_WhatsApp_Button(
+            $settings['whatsapp_number'],
+            ( $settings['whatsapp_sticky_enabled'] ?? 'no' ) === 'yes'
+        );
+        $wa_button->init();
+    }
+
     // Admin: manual "Mark as Paid" action (reconciliation — not polling)
     add_action('admin_post_orangepill_mark_paid', 'orangepill_wc_mark_paid');
 
