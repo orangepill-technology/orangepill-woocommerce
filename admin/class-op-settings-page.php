@@ -339,6 +339,65 @@ class OP_Settings_Page {
                             </p>
                         </td>
                     </tr>
+
+                    <tr>
+                        <td colspan="2"><h2 style="margin: 10px 0 0;"><?php esc_html_e('WhatsApp Button', 'orangepill-wc'); ?></h2></td>
+                    </tr>
+
+                    <tr>
+                        <th scope="row">
+                            <label for="whatsapp_enabled"><?php esc_html_e('Enable WhatsApp Button', 'orangepill-wc'); ?></label>
+                        </th>
+                        <td>
+                            <input
+                                type="checkbox"
+                                name="whatsapp_enabled"
+                                id="whatsapp_enabled"
+                                value="yes"
+                                <?php checked($settings['whatsapp_enabled'] ?? 'no', 'yes'); ?>
+                            />
+                            <p class="description">
+                                <?php esc_html_e('Show a "Consultar por WhatsApp" button on single product pages.', 'orangepill-wc'); ?>
+                            </p>
+                        </td>
+                    </tr>
+
+                    <tr>
+                        <th scope="row">
+                            <label for="whatsapp_number"><?php esc_html_e('WhatsApp Number', 'orangepill-wc'); ?></label>
+                        </th>
+                        <td>
+                            <input
+                                type="text"
+                                name="whatsapp_number"
+                                id="whatsapp_number"
+                                value="<?php echo esc_attr($settings['whatsapp_number'] ?? ''); ?>"
+                                class="regular-text"
+                                placeholder="573001234567"
+                            />
+                            <p class="description">
+                                <?php esc_html_e('Phone number in E.164 format without the leading + (e.g. 573001234567). Must be linked to the WhatsApp Business API integration in the Orangepill platform.', 'orangepill-wc'); ?>
+                            </p>
+                        </td>
+                    </tr>
+
+                    <tr>
+                        <th scope="row">
+                            <label for="whatsapp_sticky_enabled"><?php esc_html_e('Show Sticky Button', 'orangepill-wc'); ?></label>
+                        </th>
+                        <td>
+                            <input
+                                type="checkbox"
+                                name="whatsapp_sticky_enabled"
+                                id="whatsapp_sticky_enabled"
+                                value="yes"
+                                <?php checked($settings['whatsapp_sticky_enabled'] ?? 'no', 'yes'); ?>
+                            />
+                            <p class="description">
+                                <?php esc_html_e('Show a floating "WhatsApp" button on all store pages (bottom-right corner).', 'orangepill-wc'); ?>
+                            </p>
+                        </td>
+                    </tr>
                 </table>
 
                 <p class="submit">
@@ -465,7 +524,10 @@ class OP_Settings_Page {
             'webchat_entrypoint_id' => sanitize_text_field($_POST['webchat_entrypoint_id'] ?? '679625a3-7ce0-41be-8c11-ca60e83d473a'),
             'webchat_embed_url'     => esc_url_raw($_POST['webchat_embed_url'] ?? 'http://localhost:5200/webchat/embed.js'),
             'identity_secret'       => sanitize_text_field($_POST['identity_secret'] ?? ''),
-            'wompi_public_key'      => sanitize_text_field($_POST['wompi_public_key'] ?? ''),
+            'wompi_public_key'          => sanitize_text_field($_POST['wompi_public_key'] ?? ''),
+            'whatsapp_enabled'          => isset($_POST['whatsapp_enabled']) ? 'yes' : 'no',
+            'whatsapp_number'           => preg_replace( '/[^0-9]/', '', $_POST['whatsapp_number'] ?? '' ),
+            'whatsapp_sticky_enabled'   => isset($_POST['whatsapp_sticky_enabled']) ? 'yes' : 'no',
         );
 
         if (!empty($settings['webhook_secret']) && strlen($settings['webhook_secret']) < 8) {
