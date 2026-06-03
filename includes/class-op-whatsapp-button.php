@@ -43,10 +43,12 @@ class OP_WhatsApp_Button {
         $url = $this->build_wa_url( $message );
 
         printf(
-            '<a href="%s" target="_blank" rel="noopener noreferrer"
-                class="button alt copifam-wa-button"
-                style="background-color:#25D366;color:#fff;margin-top:8px;display:flex;'
-                . 'align-items:center;gap:8px;justify-content:center;border-color:#25D366;">%s %s</a>',
+            '<div style="width:100%;margin-top:8px;">'
+                . '<a href="%s" target="_blank" rel="noopener noreferrer"
+                    class="button alt copifam-wa-button"
+                    style="background-color:#25D366;color:#fff;width:100%;display:flex;'
+                    . 'align-items:center;gap:8px;justify-content:center;border-color:#25D366;">%s %s</a>'
+                . '</div>',
             esc_url( $url ),
             $this->whatsapp_icon(),
             esc_html__( 'Consultar por WhatsApp', 'orangepill-wc' )
